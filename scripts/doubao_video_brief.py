@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Use logged-in Doubao Web to produce a quick Douyin video brief.
 
-This helper drives the user's current Chrome through the web-access CDP proxy.
-It never reads browser profile files, cookies, localStorage, or tokens. If the
-current Chrome session is not logged into Doubao, the script stops instead of
-opening another browser or silently degrading to a non-authenticated route.
+This legacy-compatible helper uses an optional loopback browser bridge. Codex
+Chrome workflows should prefer a sanitized browser capture. Neither route reads
+browser profile files, cookies, localStorage, or tokens. If the current browser
+session is not logged into Doubao, the workflow must stop instead of silently
+degrading to a non-authenticated route.
 """
 
 from __future__ import annotations
@@ -18,10 +19,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib import error, parse, request
+from urllib import parse
 
+import browser_bridge
 
-PROXY = "http://localhost:3456"
 DOUBAO_CHAT_URL = "https://www.doubao.com/chat/"
 
 try:
@@ -35,49 +36,40 @@ class DoubaoBriefError(RuntimeError):
     pass
 
 
+BRIDGE = browser_bridge.BrowserBridge(browser_bridge.DEFAULT_ENDPOINT)
+
+
+def configure_browser_bridge(endpoint: str | None) -> None:
+    global BRIDGE
+    try:
+        BRIDGE = browser_bridge.BrowserBridge(endpoint)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DoubaoBriefError(str(exc)) from exc
+
+
 def http_json(method: str, path: str, body: str | None = None, timeout: int = 30) -> Any:
-    data = body.encode("utf-8") if body is not None else None
-    req = request.Request(
-        f"{PROXY}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "text/plain; charset=utf-8"},
-    )
     try:
-        # req is always rooted at the fixed local PROXY constant.
-        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            payload = resp.read().decode("utf-8", errors="replace")
-    except error.URLError as exc:
-        raise DoubaoBriefError(f"web-access CDP proxy request failed: {exc}") from exc
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise DoubaoBriefError(f"CDP proxy returned non-JSON: {payload[:300]}") from exc
+        return BRIDGE.json(method, path, body, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DoubaoBriefError(str(exc)) from exc
 
 
 def eval_js(target: str, js: str, timeout: int = 30) -> Any:
-    result = http_json("POST", f"/eval?target={parse.quote(target)}", js, timeout=timeout)
-    if "error" in result:
-        raise DoubaoBriefError(f"CDP eval failed: {result['error']}")
-    if "exceptionDetails" in result:
-        details = result.get("exceptionDetails") or {}
-        raise DoubaoBriefError(f"CDP eval exception: {details.get('text', details)}")
-    return result.get("value")
+    try:
+        return BRIDGE.evaluate(target, js, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DoubaoBriefError(str(exc)) from exc
 
 
 def open_target(url: str) -> str:
-    result = http_json("GET", f"/new?url={parse.quote(url, safe='')}", timeout=60)
-    target = result.get("targetId")
-    if not target:
-        raise DoubaoBriefError(f"Could not create browser target: {result}")
-    return str(target)
+    try:
+        return BRIDGE.open_target(url)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DoubaoBriefError(str(exc)) from exc
 
 
 def close_target(target: str) -> None:
-    try:
-        http_json("GET", f"/close?target={parse.quote(target)}", timeout=10)
-    except Exception:
-        pass
+    BRIDGE.close_target(target)
 
 
 def click_at(target: str, selector: str) -> Any:
@@ -494,7 +486,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path, help="Output directory. Defaults to ./dy_note_doubao_<id>.")
     parser.add_argument("--mode", choices=["fast", "evidence"], default="fast", help="Prompt style for Doubao.")
     parser.add_argument("--check-login", action="store_true", help="Only verify the current Chrome has a logged-in Doubao chat page.")
-    parser.add_argument("--target", help="Reuse an existing web-access CDP target id.")
+    parser.add_argument("--target", help="Reuse an existing local-browser-bridge target id.")
+    parser.add_argument(
+        "--browser-endpoint",
+        help="Loopback browser bridge origin. Defaults to DY_NOTE_BROWSER_ENDPOINT or http://127.0.0.1:3456.",
+    )
     parser.add_argument("--keep-tab", action="store_true", help="Do not close the tab created by this script.")
     parser.add_argument("--max-wait-seconds", type=int, default=180, help="Maximum time to wait for Doubao's answer.")
     parser.add_argument("--poll-seconds", type=int, default=10, help="Polling interval while waiting for the answer.")
@@ -505,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     try:
+        configure_browser_bridge(args.browser_endpoint)
         report = run_brief(args)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report.get("status") == "ok" else 3

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Extract Douyin Web built-in AI chapter briefs from the user's Chrome.
 
-This helper drives the user's current Chrome through the web-access CDP proxy.
-It never reads browser profile files, cookies, localStorage, request signatures,
-or signed media URLs. The browser loads Douyin normally; the script only reads
-visible DOM text and can click visible "问AI" / "识别画面" controls.
+This legacy-compatible helper uses an optional loopback browser bridge. Codex
+Chrome workflows should prefer a sanitized browser capture. Neither route reads
+browser profile files, cookies, localStorage, request signatures, or signed
+media URLs.
 """
 
 from __future__ import annotations
@@ -17,10 +17,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib import error, parse, request
 
+import browser_bridge
 
-PROXY = "http://localhost:3456"
 TIME_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
 
 try:
@@ -34,49 +33,40 @@ class DouyinWebAIError(RuntimeError):
     pass
 
 
+BRIDGE = browser_bridge.BrowserBridge(browser_bridge.DEFAULT_ENDPOINT)
+
+
+def configure_browser_bridge(endpoint: str | None) -> None:
+    global BRIDGE
+    try:
+        BRIDGE = browser_bridge.BrowserBridge(endpoint)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinWebAIError(str(exc)) from exc
+
+
 def http_json(method: str, path: str, body: str | None = None, timeout: int = 30) -> Any:
-    data = body.encode("utf-8") if body is not None else None
-    req = request.Request(
-        f"{PROXY}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "text/plain; charset=utf-8"},
-    )
     try:
-        # req is always rooted at the fixed local PROXY constant.
-        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            payload = resp.read().decode("utf-8", errors="replace")
-    except error.URLError as exc:
-        raise DouyinWebAIError(f"web-access CDP proxy request failed: {exc}") from exc
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise DouyinWebAIError(f"CDP proxy returned non-JSON: {payload[:300]}") from exc
+        return BRIDGE.json(method, path, body, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinWebAIError(str(exc)) from exc
 
 
 def eval_js(target: str, js: str, timeout: int = 30) -> Any:
-    result = http_json("POST", f"/eval?target={parse.quote(target)}", js, timeout=timeout)
-    if "error" in result:
-        raise DouyinWebAIError(f"CDP eval failed: {result['error']}")
-    if "exceptionDetails" in result:
-        details = result.get("exceptionDetails") or {}
-        raise DouyinWebAIError(f"CDP eval exception: {details.get('text', details)}")
-    return result.get("value")
+    try:
+        return BRIDGE.evaluate(target, js, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinWebAIError(str(exc)) from exc
 
 
 def open_target(url: str) -> str:
-    result = http_json("GET", f"/new?url={parse.quote(url, safe='')}", timeout=60)
-    target = result.get("targetId")
-    if not target:
-        raise DouyinWebAIError(f"Could not create browser target: {result}")
-    return str(target)
+    try:
+        return BRIDGE.open_target(url)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinWebAIError(str(exc)) from exc
 
 
 def close_target(target: str) -> None:
-    try:
-        http_json("GET", f"/close?target={parse.quote(target)}", timeout=10)
-    except Exception:
-        pass
+    BRIDGE.close_target(target)
 
 
 def extract_first_url(text: str) -> str | None:
@@ -429,7 +419,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Extract Douyin Web built-in AI chapter brief from current Chrome.")
     parser.add_argument("source", nargs="?", help="Douyin URL or copied share text.")
     parser.add_argument("--from-file", type=Path, help="Read Douyin URL/share text from a UTF-8 file.")
-    parser.add_argument("--target", help="Existing web-access CDP target id. The script will not close it.")
+    parser.add_argument("--target", help="Existing local-browser-bridge target id. The script will not close it.")
+    parser.add_argument(
+        "--browser-endpoint",
+        help="Loopback browser bridge origin. Defaults to DY_NOTE_BROWSER_ENDPOINT or http://127.0.0.1:3456.",
+    )
     parser.add_argument("--out-dir", type=Path, help="Output directory. Defaults to ./dy_note_douyin_ai_<id>.")
     parser.add_argument("--identify-frame", action="store_true", help="Click the visible Douyin '识别画面' button when available.")
     parser.add_argument("--keep-tab", action="store_true", help="Keep a tab opened by this script.")
@@ -441,6 +435,7 @@ def main() -> int:
     parser = build_arg_parser()
     args = parser.parse_args()
     try:
+        configure_browser_bridge(args.browser_endpoint)
         result = run(args)
     except DouyinWebAIError as exc:
         print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False, indent=2))

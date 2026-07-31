@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Extract clean note-ready text from a Douyin video.
 
-The default network route uses the local web-access CDP proxy and the user's
-already-authorized Chrome page. It does not read browser profile files or copy
-cookies. Signed media URLs are treated as temporary transport details and are
-not written to metadata.
+Direct URL extraction uses an optional loopback browser bridge and the user's
+already-authorized browser page. Codex workflows may instead import a safe
+browser capture. Neither route reads browser profile files or copies cookies.
+Signed media URLs are temporary transport details and are not written to
+metadata.
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+import browser_bridge
 
-PROXY = "http://localhost:3456"
+
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-0.6B"
 DOUYIN_SOURCE_HOSTS = (
     "douyin.com",
@@ -56,49 +58,40 @@ class DouyinTextError(RuntimeError):
     pass
 
 
+BRIDGE = browser_bridge.BrowserBridge(browser_bridge.DEFAULT_ENDPOINT)
+
+
+def configure_browser_bridge(endpoint: str | None) -> None:
+    global BRIDGE
+    try:
+        BRIDGE = browser_bridge.BrowserBridge(endpoint)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinTextError(str(exc)) from exc
+
+
 def http_json(method: str, path: str, body: str | None = None, timeout: int = 30) -> Any:
-    data = body.encode("utf-8") if body is not None else None
-    req = request.Request(
-        f"{PROXY}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "text/plain; charset=utf-8"},
-    )
     try:
-        # req is always rooted at the fixed local PROXY constant.
-        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            payload = resp.read().decode("utf-8", errors="replace")
-    except error.URLError as exc:
-        raise DouyinTextError(f"CDP proxy request failed: {exc}") from exc
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise DouyinTextError(f"CDP proxy returned non-JSON: {payload[:300]}") from exc
+        return BRIDGE.json(method, path, body, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinTextError(str(exc)) from exc
 
 
 def eval_js(target: str, js: str, timeout: int = 30) -> Any:
-    result = http_json("POST", f"/eval?target={parse.quote(target)}", js, timeout=timeout)
-    if "error" in result:
-        raise DouyinTextError(f"CDP eval failed: {result['error']}")
-    if "exceptionDetails" in result:
-        details = result.get("exceptionDetails") or {}
-        raise DouyinTextError(f"CDP eval exception: {details.get('text', details)}")
-    return result.get("value")
+    try:
+        return BRIDGE.evaluate(target, js, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinTextError(str(exc)) from exc
 
 
 def open_target(url: str) -> str:
-    result = http_json("GET", f"/new?url={parse.quote(url, safe='')}", timeout=60)
-    target = result.get("targetId")
-    if not target:
-        raise DouyinTextError(f"Could not create browser target: {result}")
-    return str(target)
+    try:
+        return BRIDGE.open_target(url)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinTextError(str(exc)) from exc
 
 
 def close_target(target: str) -> None:
-    try:
-        http_json("GET", f"/close?target={parse.quote(target)}", timeout=10)
-    except Exception:
-        pass
+    BRIDGE.close_target(target)
 
 
 def extract_first_url(text: str) -> str:
@@ -1199,7 +1192,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--metadata-json", type=Path, help="Optional metadata JSON to include in outputs.")
     parser.add_argument("--source-url", help="Optional original source URL for local transcript mode.")
     parser.add_argument("--out-dir", type=Path, help="Output directory. Defaults to ./dy_note_<aweme_id>.")
-    parser.add_argument("--target", help="Reuse an existing web-access CDP target id.")
+    parser.add_argument("--target", help="Reuse an existing local-browser-bridge target id.")
+    parser.add_argument(
+        "--browser-endpoint",
+        help="Loopback browser bridge origin. Defaults to DY_NOTE_BROWSER_ENDPOINT or http://127.0.0.1:3456.",
+    )
     parser.add_argument("--keep-tab", action="store_true", help="Do not close the browser tab created by this script.")
     parser.add_argument("--force", action="store_true", help="Rebuild outputs even when transcript.txt, segments.json, and metadata.json already exist.")
     parser.add_argument("--asr-backend", choices=["auto", "whisper", "qwen3-asr"], default="auto", help="ASR backend for Douyin URL or --from-audio. auto prefers Qwen3-ASR for Chinese when the shared environment exists; use whisper for foreign-language videos.")
@@ -1219,6 +1216,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        configure_browser_bridge(args.browser_endpoint)
         if args.from_srt:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_srt.stem}"
             report = (

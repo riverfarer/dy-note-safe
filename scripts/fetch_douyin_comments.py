@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch Douyin comments through the local web-access CDP proxy.
+"""Fetch Douyin comments through an optional local browser bridge.
 
 The script never reads browser profile files or cookies. All network requests
 run inside the already-authorized browser page via Runtime.evaluate.
@@ -16,10 +16,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib import error, parse, request
 
+import browser_bridge
 
-PROXY = "http://localhost:3456"
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
 CSV_FIELDS = [
     "row_index",
@@ -49,6 +48,17 @@ CSV_FIELDS = [
 
 class DouyinCommentError(RuntimeError):
     pass
+
+
+BRIDGE = browser_bridge.BrowserBridge(browser_bridge.DEFAULT_ENDPOINT)
+
+
+def configure_browser_bridge(endpoint: str | None) -> None:
+    global BRIDGE
+    try:
+        BRIDGE = browser_bridge.BrowserBridge(endpoint)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinCommentError(str(exc)) from exc
 
 
 def progress(enabled: bool, phase: str, **data: Any) -> None:
@@ -92,48 +102,28 @@ def output_label(no_replies: bool, is_sample: bool) -> str:
 
 
 def http_json(method: str, path: str, body: str | None = None, timeout: int = 30) -> Any:
-    data = body.encode("utf-8") if body is not None else None
-    req = request.Request(
-        f"{PROXY}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "text/plain; charset=utf-8"},
-    )
     try:
-        # req is always rooted at the fixed local PROXY constant.
-        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
-            payload = resp.read().decode("utf-8", errors="replace")
-    except error.URLError as exc:
-        raise DouyinCommentError(f"CDP proxy request failed: {exc}") from exc
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise DouyinCommentError(f"CDP proxy returned non-JSON: {payload[:300]}") from exc
+        return BRIDGE.json(method, path, body, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinCommentError(str(exc)) from exc
 
 
 def eval_js(target: str, js: str, timeout: int = 30) -> Any:
-    result = http_json("POST", f"/eval?target={parse.quote(target)}", js, timeout=timeout)
-    if "error" in result:
-        raise DouyinCommentError(f"CDP eval failed: {result['error']}")
-    if "exceptionDetails" in result:
-        details = result.get("exceptionDetails") or {}
-        raise DouyinCommentError(f"CDP eval exception: {details.get('text', details)}")
-    return result.get("value")
+    try:
+        return BRIDGE.evaluate(target, js, timeout)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinCommentError(str(exc)) from exc
 
 
 def open_target(url: str) -> str:
-    result = http_json("GET", f"/new?url={parse.quote(url, safe='')}", timeout=45)
-    target = result.get("targetId")
-    if not target:
-        raise DouyinCommentError(f"Could not create browser target: {result}")
-    return target
+    try:
+        return BRIDGE.open_target(url, timeout=45)
+    except browser_bridge.BrowserBridgeError as exc:
+        raise DouyinCommentError(str(exc)) from exc
 
 
 def close_target(target: str) -> None:
-    try:
-        http_json("GET", f"/close?target={parse.quote(target)}", timeout=10)
-    except Exception:
-        pass
+    BRIDGE.close_target(target)
 
 
 def extract_aweme_id(url: str) -> str:
@@ -604,9 +594,13 @@ def read_main_rows_from_json(path: Path) -> tuple[str | None, str | None, list[d
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch Douyin comments through web-access CDP proxy.")
+    parser = argparse.ArgumentParser(description="Fetch Douyin comments through a local browser bridge.")
     parser.add_argument("url", help="Douyin note/video URL")
-    parser.add_argument("--target", help="Existing web-access target id to reuse")
+    parser.add_argument("--target", help="Existing local-browser-bridge target id to reuse")
+    parser.add_argument(
+        "--browser-endpoint",
+        help="Loopback browser bridge origin. Defaults to DY_NOTE_BROWSER_ENDPOINT or http://127.0.0.1:3456.",
+    )
     parser.add_argument("--keep-tab", action="store_true", help="Do not close the tab opened by this script")
     parser.add_argument("--out-dir", default=".", help="Output directory")
     parser.add_argument("--basename", help="Output basename without _full.json/_full.csv")
@@ -639,6 +633,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    try:
+        configure_browser_bridge(args.browser_endpoint)
+    except DouyinCommentError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     started_at = time.monotonic()
     progress_enabled = not args.quiet_progress
     main_delay = args.main_delay if args.main_delay is not None else args.delay
