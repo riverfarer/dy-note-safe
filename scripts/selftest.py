@@ -87,6 +87,15 @@ def test_build_outputs_from_srt() -> None:
         assert budget["quality_metrics"]["quality_tier"] in {"medium", "high"}
         assert report["outputs"]["note_budget"] == "note_budget.json"
         assert report["outputs"]["asset_manifest"] == "assets/asset_manifest.json"
+        assert report["input_artifact"]["kind"] == "srt"
+        assert report["input_artifact"]["sha256"]
+        assert dut.existing_outputs_match_artifact(out_dir, srt_path, "srt") is True
+        other_srt = Path(tmp) / "other.srt"
+        other_srt.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n完全不同的视频。",
+            encoding="utf-8",
+        )
+        assert dut.existing_outputs_match_artifact(out_dir, other_srt, "srt") is False
         assert (out_dir / "assets" / "transcripts" / "transcript.txt").exists()
         note_path = out_dir / "learning_note.md"
         note_path.write_text("# 学习笔记\n\n这是一个很短的测试笔记。", encoding="utf-8")

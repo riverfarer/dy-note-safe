@@ -10,6 +10,7 @@ not written to metadata.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -411,6 +412,49 @@ def existing_outputs_match_source(out_dir: Path, source_text: str) -> bool:
     return expected_url in stored_urls
 
 
+def artifact_identity(path: Path, kind: str) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "kind": kind,
+        "name": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def existing_outputs_match_artifact(out_dir: Path, source_path: Path, source_kind: str) -> bool:
+    if not core_outputs_ready(out_dir) or not source_path.exists():
+        return False
+    try:
+        metadata = load_metadata(out_dir / "metadata.json")
+    except (OSError, json.JSONDecodeError):
+        return False
+    stored = metadata.get("input_artifact") if isinstance(metadata, dict) else None
+    if not isinstance(stored, dict):
+        return False
+    current = artifact_identity(source_path, source_kind)
+    return all(stored.get(key) == current[key] for key in ("kind", "size_bytes", "sha256"))
+
+
+def should_reuse_artifact_outputs(
+    out_dir: Path,
+    source_path: Path,
+    source_kind: str,
+    force: bool,
+) -> bool:
+    if not core_outputs_ready(out_dir):
+        return False
+    if not existing_outputs_match_artifact(out_dir, source_path, source_kind):
+        raise DouyinTextError(
+            "The output directory belongs to a different or unverifiable local input. "
+            "Use a new --out-dir; --force only rebuilds the same input."
+        )
+    return not force
+
+
 def newest_mtime(paths: list[Path]) -> float:
     return max((path.stat().st_mtime for path in paths if path.exists()), default=0.0)
 
@@ -631,8 +675,14 @@ def build_from_local_transcript(
     out_dir: Path,
     metadata_path: Path | None,
     source_url: str | None = None,
+    identity_path: Path | None = None,
+    identity_kind: str | None = None,
 ) -> dict[str, Any]:
     metadata = load_metadata(metadata_path)
+    metadata["input_artifact"] = artifact_identity(
+        identity_path or source_path,
+        identity_kind or source_kind,
+    )
     text = source_path.read_text(encoding="utf-8-sig", errors="replace")
     if source_kind == "srt":
         segments = parse_srt_text(text)
@@ -653,6 +703,8 @@ def build_from_qwen_result(
     out_dir: Path,
     metadata: dict[str, Any] | None,
     source_url: str | None = None,
+    identity_path: Path | None = None,
+    identity_kind: str | None = None,
 ) -> dict[str, Any]:
     data = json.loads(result_path.read_text(encoding="utf-8-sig"))
     segments: list[dict[str, Any]] = []
@@ -681,6 +733,10 @@ def build_from_qwen_result(
     qwen_metadata["qwen_language"] = data.get("language")
     qwen_metadata["qwen_model"] = data.get("model")
     qwen_metadata["qwen_chunk_seconds"] = data.get("chunk_seconds")
+    qwen_metadata["input_artifact"] = artifact_identity(
+        identity_path or result_path,
+        identity_kind or "qwen-json",
+    )
     transcript_source = f"Qwen3-ASR: {data.get('model') or DEFAULT_QWEN_MODEL}"
     return build_outputs(segments, out_dir, qwen_metadata, source_url, transcript_source)
 
@@ -1102,19 +1158,46 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.from_srt:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_srt.stem}"
-            report = reuse_existing_outputs(out_dir) if not args.force and core_outputs_ready(out_dir) else build_from_local_transcript(args.from_srt, "srt", out_dir, args.metadata_json, args.source_url)
+            report = (
+                reuse_existing_outputs(out_dir)
+                if should_reuse_artifact_outputs(out_dir, args.from_srt, "srt", args.force)
+                else build_from_local_transcript(args.from_srt, "srt", out_dir, args.metadata_json, args.source_url)
+            )
         elif args.from_txt:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_txt.stem}"
-            report = reuse_existing_outputs(out_dir) if not args.force and core_outputs_ready(out_dir) else build_from_local_transcript(args.from_txt, "txt", out_dir, args.metadata_json, args.source_url)
+            report = (
+                reuse_existing_outputs(out_dir)
+                if should_reuse_artifact_outputs(out_dir, args.from_txt, "txt", args.force)
+                else build_from_local_transcript(args.from_txt, "txt", out_dir, args.metadata_json, args.source_url)
+            )
         elif args.from_whisper_json:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_whisper_json.stem}"
-            report = reuse_existing_outputs(out_dir) if not args.force and core_outputs_ready(out_dir) else build_from_local_transcript(args.from_whisper_json, "whisper-json", out_dir, args.metadata_json, args.source_url)
+            report = (
+                reuse_existing_outputs(out_dir)
+                if should_reuse_artifact_outputs(out_dir, args.from_whisper_json, "whisper-json", args.force)
+                else build_from_local_transcript(
+                    args.from_whisper_json,
+                    "whisper-json",
+                    out_dir,
+                    args.metadata_json,
+                    args.source_url,
+                )
+            )
         elif args.from_qwen_json:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_qwen_json.stem}"
-            report = reuse_existing_outputs(out_dir) if not args.force and core_outputs_ready(out_dir) else build_from_qwen_result(args.from_qwen_json, out_dir, load_metadata(args.metadata_json), args.source_url)
+            report = (
+                reuse_existing_outputs(out_dir)
+                if should_reuse_artifact_outputs(out_dir, args.from_qwen_json, "qwen-json", args.force)
+                else build_from_qwen_result(
+                    args.from_qwen_json,
+                    out_dir,
+                    load_metadata(args.metadata_json),
+                    args.source_url,
+                )
+            )
         elif args.from_audio:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_audio.stem}"
-            if not args.force and core_outputs_ready(out_dir):
+            if should_reuse_artifact_outputs(out_dir, args.from_audio, "audio", args.force):
                 report = reuse_existing_outputs(out_dir)
             else:
                 resolved_asr_backend = resolve_asr_backend(args.asr_backend, args.language, args.qwen_python)
@@ -1130,11 +1213,26 @@ def main(argv: list[str] | None = None) -> int:
                         args.qwen_max_new_tokens,
                         args.qwen_chunk_seconds,
                     )
-                    report = build_from_qwen_result(result_path, out_dir, load_metadata(args.metadata_json), args.source_url)
+                    report = build_from_qwen_result(
+                        result_path,
+                        out_dir,
+                        load_metadata(args.metadata_json),
+                        args.source_url,
+                        identity_path=args.from_audio,
+                        identity_kind="audio",
+                    )
                     report["qwen_result"] = str(result_path)
                 else:
                     srt_path = run_whisper(args.from_audio, out_dir, args.asr_model, args.language)
-                    report = build_from_local_transcript(srt_path, "srt", out_dir, args.metadata_json, args.source_url)
+                    report = build_from_local_transcript(
+                        srt_path,
+                        "srt",
+                        out_dir,
+                        args.metadata_json,
+                        args.source_url,
+                        identity_path=args.from_audio,
+                        identity_kind="audio",
+                    )
                     report["whisper_srt"] = str(srt_path)
         else:
             if not args.source:
