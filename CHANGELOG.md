@@ -4,8 +4,21 @@ All notable changes to this derivative are documented here.
 
 ## Unreleased
 
+### Browser compatibility
+
+- Add a Codex Chrome capture route that imports visible page evidence through a
+  versioned, sanitized JSON contract.
+- Add a shared local browser bridge client with configurable
+  `DY_NOTE_BROWSER_ENDPOINT` / `--browser-endpoint` support.
+- Keep the original port compatible while restricting bridge endpoints to
+  explicit loopback HTTP origins.
+- Report Codex Chrome capture and standalone local-bridge readiness separately
+  in the environment check.
+
 ### Security
 
+- Reject browser captures containing credentials, browser storage, request
+  headers/signatures, or signed media URLs.
 - Keep observed Douyin request signatures inside the browser context.
 - Recursively remove temporary signed URLs and sensitive metadata before write.
 - Neutralize spreadsheet formulas in exported comment CSV files while retaining

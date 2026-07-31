@@ -7,9 +7,9 @@ DyNote extracts and analyzes readable Douyin material for notes, writing, resear
 ## Extraction Routes
 
 1. Local transcript cleanup: SRT, Whisper JSON, Qwen JSON, or TXT -> `transcript.cleaned.md`, `transcript.txt`, `segments.json`, `metadata.json`.
-2. Logged-in Douyin Web AI brief: Douyin URL/share text -> current Chrome Douyin page -> built-in `问AI` / `识别画面` -> `douyin_ai_brief.md`, `douyin_ai_brief.json` with evidence classification.
-3. Browser video extraction: Douyin URL -> web-access Chrome tab -> video URL -> local media file -> 16 kHz WAV -> Whisper or Qwen3-ASR -> clean text outputs.
-4. Logged-in Doubao fallback brief: full Douyin share text -> current Chrome Doubao chat -> `doubao_brief.md`, `doubao_brief.json` with evidence classification.
+2. Codex Chrome capture: Douyin URL/share text -> installed Chrome control Skill -> visible metadata / built-in `问AI` / bounded comments -> sanitized capture JSON -> `import_browser_capture.py`.
+3. Standalone browser extraction: Douyin URL -> compatible loopback browser bridge -> local media file -> 16 kHz WAV -> Whisper or Qwen3-ASR -> clean text outputs.
+4. Logged-in Doubao fallback brief: full Douyin share text -> the same authorized browser mode -> `doubao_brief.md`, `doubao_brief.json` with evidence classification.
 5. Official page text: description, author, duration, chapters, and summary are metadata. Treat them as context, not as full transcript.
 
 ## Douyin Subtitle Reality And Task Routing
@@ -189,7 +189,7 @@ Do not spend `research-pass` effort by default just because the user asks whethe
 
 ## Douyin Web AI Brief Route
 
-Use this route when the user wants a fast "what is this video about" answer, a rough timeline, first-pass note material, or a visual/context hypothesis. It must use the current web-access Chrome session and the user's logged-in Douyin Web page.
+Use this route when the user wants a fast "what is this video about" answer, a rough timeline, first-pass note material, or a visual/context hypothesis. In Codex, use the installed Chrome control Skill and import a sanitized visible-page capture. In standalone mode, use a compatible loopback browser bridge. Both routes require the selected browser to be logged into Douyin Web.
 
 Practical behavior verified on `https://www.douyin.com/jingxuan?modal_id=7655645985318085322`:
 
@@ -213,7 +213,7 @@ Evidence levels:
 
 ## Doubao Web Brief Route
 
-Use this route only as a fallback or cross-check when Douyin Web AI is unavailable, weak, or the user explicitly asks for Doubao. It must use the current web-access Chrome session and verify that Doubao Web is logged in before submitting anything.
+Use this route only as a fallback or cross-check when Douyin Web AI is unavailable, weak, or the user explicitly asks for Doubao. Reuse the same authorized browser mode and verify that Doubao Web is logged in before submitting anything.
 
 Do not:
 

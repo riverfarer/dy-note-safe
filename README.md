@@ -31,6 +31,7 @@ DyNote 是一个面向 Codex 这类 Agent 的抖音学习工具。你给它抖�
 - 防幻觉分级：抖音问 AI 很适合补画面和时间线，但不能提取完整字幕；豆包只在抖音 AI 不可用或质量弱时备用，搜索式回答会标成草稿或假设。
 - 不重复花时间：已有 `douyin_ai_brief.md`、`transcript.txt`、`segments.json`、`metadata.json`、`note_budget.json` 时，会先复用，只补真正缺的证据。
 - 安全复用：输出目录会绑定作品 ID、来源 URL 或本地输入文件指纹；来源不一致时拒绝复用，避免把上一条视频的材料写进当前笔记。
+- 双浏览器模式：Codex 内优先复用现成的 Chrome 控制 Skill 并导入安全采集包；独立 CLI 使用可配置的本地浏览器桥接，不再写死单一代理。
 - 资产包优先：字幕、转写、评论样本或完整评论会进入 `assets/`，后续可以继续做评论聚类、用户研究、脚本复盘和知识库检索。
 - 继承 Bili Note 的笔记逻辑：先保存原始材料，再根据视频时长、信息密度和互动质量生成适合长度的学习笔记。
 
@@ -42,7 +43,7 @@ DyNote 是一个面向 Codex 这类 Agent 的抖音学习工具。你给它抖�
 
 ```text
 请帮我安装这个 skill：
-https://github.com/Rimagination/dy-note
+https://github.com/riverfarer/dy-note-safe
 ```
 
 ### 2. 分析一条视频
@@ -146,11 +147,46 @@ python scripts/check_environment.py
 | 能力 | 需要什么 | 说明 |
 | --- | --- | --- |
 | 基础整理 | Python 3.10+、已安装本 skill | 整理已有文本、检查输出目录 |
-| 抖音内置 AI | Chrome、`web-access`、当前 Chrome 已登录抖音 | 低转写密度、画面理解和快速筛选 |
-| 豆包备用快读 | Chrome、`web-access`、当前 Chrome 已登录豆包 | 抖音内置 AI 不可用或质量弱时使用 |
+| Codex Chrome 快读 | `chrome:control-chrome`、当前 Chrome 已登录抖音 | 安全采集可见页面、AI 章节和有边界的评论样本 |
+| 独立浏览器桥接 | 兼容桥接服务、专用浏览器配置、`DY_NOTE_BROWSER_ENDPOINT` | 直接链接提取、完整评论等独立 CLI 路线 |
+| 豆包备用快读 | Codex Chrome 或本地浏览器桥接、对应浏览器已登录豆包 | 抖音内置 AI 不可用或质量弱时使用 |
 | 中文转写 | `ffmpeg`、共享 Qwen3-ASR 环境 | 中文或未指定语言优先 |
 | 外语转写 | `ffmpeg`、Whisper / faster-whisper | 外语视频优先 |
 | 评论与研究 | 网络可用、对应抓取能力 | 抓不到时会说明覆盖范围 |
+
+## 浏览器双模式
+
+### Codex Chrome 模式
+
+在 Codex 中，DyNote 优先使用已安装的 `chrome:control-chrome` Skill 复用当前登录态。Agent 只采集可见页面、播放状态、抖音 AI 章节和有边界的可见评论样本，然后生成 `dy-note-browser-capture-v1` JSON：
+
+```powershell
+python scripts/import_browser_capture.py `
+  ".\browser_capture.json" `
+  --out-dir ".\dy_note_output"
+```
+
+导入器会拒绝 Cookie、token、请求头、请求签名和带签名媒体 URL，并检查抖音来源与作品 ID。当前浏览器能力不能安全产生本地媒体文件时，会把完整 ASR 标为阻塞，不会绕过安全边界。
+
+### 独立 CLI 模式
+
+直接从链接下载、转写或完整抓取评论时，使用兼容的本地浏览器桥接。默认地址仍兼容原路线，也可以配置：
+
+```powershell
+$env:DY_NOTE_BROWSER_ENDPOINT = "http://127.0.0.1:3456"
+python scripts/check_environment.py
+```
+
+或在具体命令中传入：
+
+```powershell
+python scripts/extract_douyin_text.py `
+  "https://v.douyin.com/xxxxxxx/" `
+  --browser-endpoint "http://127.0.0.1:3456" `
+  --out-dir ".\dy_note_output"
+```
+
+只允许 `localhost`、`127.0.0.1` 或 `::1` 的 HTTP 地址并要求显式端口。完整契约见 [`references/browser-modes.md`](references/browser-modes.md)。
 
 ## 资产包
 
@@ -182,6 +218,8 @@ Qwen3-ASR 虚拟环境默认放在：
 
 - 抖音内置 AI 路线需要你已经在当前 Chrome 登录抖音网页版。
 - 备用豆包路线需要你已经在当前 Chrome 登录豆包网页版。
+- Codex 模式使用现成的 Chrome 控制 Skill 读取可见页面，再通过 `import_browser_capture.py` 导入经过约束的 JSON；它不要求 `localhost:3456`。
+- 独立 CLI 模式可通过 `DY_NOTE_BROWSER_ENDPOINT` 或 `--browser-endpoint` 指定本地桥接；只接受带端口的回环 HTTP 地址。
 - DyNote 不读取或保存 Cookie、localStorage、token 等登录凭据；评论请求签名只在浏览器页面内使用。
 - 视频下载路径可能在当前进程内短暂使用签名媒体 URL，但不会把它写入元数据、日志、资产包或最终笔记；元数据写盘前会递归移除签名参数、临时媒体 URL 和相关敏感字段。
 - 评论 JSON 保留原始文本；评论 CSV 会中和以 `= + - @` 开头的单元格，避免用 Excel/WPS 打开时触发公式解析。
@@ -219,7 +257,9 @@ Qwen3-ASR 虚拟环境默认放在：
 ## 相关文件
 
 - `SKILL.md`：Codex 使用这个 skill 时读取的完整工作流说明。
-- `scripts/check_environment.py`：检查 web-access proxy、ffmpeg、Whisper、Qwen3-ASR 和本地模型缓存。
+- `scripts/browser_bridge.py`：校验并连接可选的本地浏览器桥接，只允许回环 HTTP 地址。
+- `scripts/import_browser_capture.py`：导入 Codex Chrome 生成的安全可见页面采集包，并拒绝凭据、签名字段和签名媒体 URL。
+- `scripts/check_environment.py`：分别报告 Codex Chrome 采集模式、本地浏览器桥接、ffmpeg、Whisper、Qwen3-ASR 和模型缓存。
 - `scripts/archive_dy_note_assets.py`：把字幕、转写、完整评论、AI brief 和元数据整理成 `assets/` 资产包。
 - `scripts/douyin_web_ai_brief.py`：使用当前已登录 Chrome 中的抖音网页版 `问AI / 识别画面` 提取视频章节要点和时间线。
 - `scripts/doubao_video_brief.py`：备用路线，使用当前已登录 Chrome 中的豆包网页版快速解读抖音分享文案。
@@ -230,6 +270,7 @@ Qwen3-ASR 虚拟环境默认放在：
 - `scripts/setup_qwen_asr_env.py`：创建或复用共享 Qwen3-ASR 环境。
 - `scripts/run_qwen_asr.py`：调用 Qwen3-ASR-0.6B，可按 chunk 分段避免显存溢出。
 - `scripts/score_dy_note.py`：把最终 Markdown 与 `note_budget.json` 比较，判断笔记过短、过长或合适。
+- `references/browser-modes.md`：双浏览器模式、安全采集 JSON 契约和独立桥接配置。
 - `references/douyin-video-text-notes.md`：实现细节、场景模式、证据分层、已知限制和后续改进建议。
 
 ## 社区友链

@@ -7,13 +7,16 @@ description: "DyNote: systematically and efficiently extract raw Douyin/DY video
 
 DyNote 是面向 Codex 这类 Agent 的抖音学习工具，不是一次性摘要器。核心原则是“数据资产先行，学习笔记后置”：先把字幕/转写、评论、元数据和 AI 快读沉淀为可复用资产，再按用户需求生成可追溯的学习笔记、总结和写作材料。默认目标不是字幕工程文件，而是先落一份原始数据包：`douyin_ai_brief.md`、`douyin_ai_brief.json`、`transcript.cleaned.md`、`transcript.txt`、`segments.json`、`metadata.json`、`note_budget.json`，并用 `assets/` 归档可复用资产。默认把独立字幕轨或本地自动语音识别转写当作事实主干；当转写密度低、任务需要画面理解或用户只要快速筛选时，再用已登录抖音网页版的“问AI / 识别画面”补充，豆包只作为抖音 AI 不可用时的备用快读或待核验假设。
 
-联网或登录态操作必须先使用 `web-access`。不要读取、复制或打印 Cookie、msToken、a_bogus、x-secsdk-web-signature 等登录凭据或请求签名；评论请求签名只能留在已授权 Chrome 页面内。视频下载路径可以在当前进程内短暂使用临时签名媒体 URL，但不能把它写入元数据、日志、资产包或最终回答。
+联网或登录态操作优先复用当前环境已经提供的浏览器能力。在 Codex 中，如果 `chrome:control-chrome` 可用，必须先读取并遵守该 Skill，使用用户当前 Chrome 的可见页面状态，再生成 `dy-note-browser-capture-v1` 安全采集包并通过 `import_browser_capture.py` 导入；不要假设 Codex 会提供 `localhost:3456`。独立 CLI 可以使用兼容的本地浏览器桥接，地址由 `DY_NOTE_BROWSER_ENDPOINT` 或 `--browser-endpoint` 指定，且只允许回环 HTTP 地址。不要读取、复制或打印 Cookie、msToken、a_bogus、x-secsdk-web-signature 等登录凭据或请求签名；评论请求签名只能留在已授权浏览器页面内。视频下载路径可以在当前进程内短暂使用临时签名媒体 URL，但不能把它写入元数据、日志、采集包、资产包或最终回答。
 
 DyNote 与 Bili Note 共享可复用本地资源。默认共享目录是 `%USERPROFILE%\.cache\rimagination-notes`，Qwen3-ASR 环境默认是 `%USERPROFILE%\.cache\rimagination-notes\qwen3-asr-venv`。如果任一 skill 已经安装过 Qwen3-ASR，另一个 skill 必须优先复用，不要重复安装。Hugging Face、Whisper 和 faster-whisper 缓存按本机通用缓存复用。
 
 ## 浏览器与登录态硬规则
 
-- 抖音内置 AI 和豆包备用路线都只使用 `web-access` 连接到用户当前可用的 Chrome。不要启动无登录态 Playwright 浏览器，不要用静态 curl 抓登录页，不要导出或保存 `storageState`、Cookie、localStorage 或 token。
+- 浏览器分两种模式：Codex 模式使用已安装的 Chrome 控制 Skill 读取可见页面并导入安全采集包；独立 CLI 模式使用兼容的本地浏览器桥接。不要启动无登录态 Playwright 浏览器冒充用户会话，不要用静态 curl 抓登录页，不要导出或保存 `storageState`、Cookie、localStorage 或 token。
+- Codex 模式只采集可见页面状态、播放状态、抖音 AI 章节和有边界的可见评论样本。采集 JSON 必须使用 `dy-note-browser-capture-v1`，并由 `import_browser_capture.py` 检查凭据/签名字段、签名媒体 URL、来源域名和作品 ID。
+- Codex 浏览器能力不能安全产生本地媒体文件或完整评论时，记录 `blocked` 和原因；不要为了补全流程读取浏览器存储、导出请求头或调用隐藏接口。
+- 独立桥接模式只允许 `http://127.0.0.1:<port>`、`http://localhost:<port>` 或 `http://[::1]:<port>`；远程主机、HTTPS、用户信息、路径、查询参数和片段都会被拒绝。默认 `http://127.0.0.1:3456` 仅用于兼容原路线。
 - 抖音内置 AI 路线需要当前 Chrome 已登录抖音网页版。它主要用于低转写密度、画面文字、镜头/场景或快速筛选；打开视频后使用页面右侧 `问AI`，必要时点击可见的 `识别画面` 把当前帧加入问答上下文。
 - 如果抖音页面没有 `问AI` / `识别画面` 或未生成 `章节要点`，记录为 `weak` 或 `blocked`，先确保字幕/本地自动语音识别事实主干可用，再考虑豆包备用、关键帧或 OCR。
 - 在向豆包发送内容前，必须确认 `https://www.doubao.com/chat/` 在当前 Chrome 中已登录且有可见聊天输入框、侧边栏/新对话等用户态界面。
@@ -88,7 +91,7 @@ DyNote 与 Bili Note 共享可复用本地资源。默认共享目录是 `%USERP
 ## 默认流程
 
 1. 读清用户要的是哪种场景模式：单条视频笔记、评论洞察、账号分析、话题研究、脚本拆解、电商分析、事实核查，还是知识库归档。
-2. 首次使用、换机器、或准备跑完整抖音链接流程时，先检查环境：
+2. 首次使用、换机器、或准备跑完整抖音链接流程时，先检查环境。报告会分别显示 Codex Chrome 安全采集模式和独立本地桥接模式：
 
 ```powershell
 $skill = "$env:USERPROFILE\.codex\skills\dy-note"
@@ -100,7 +103,7 @@ $py = "python"
 4. 评论、账号、话题、竞品、事实核查或批量研究任务先用 `create_analysis_plan.py` 生成 `analysis_plan.json`；已有计划且目标没变时不要重建。单条视频任务也要在脑中执行同样的证据闸门。
 5. 如果已经有 SRT、Whisper JSON 或 TXT，优先走本地整理路线，避免重复下载和转写；脚本会生成 `note_budget.json`。
 6. 如果用户要求可靠全文、学习笔记、逐句内容、引用、脚本拆解或事实核查，优先使用 `extract_douyin_text.py` 取得字幕轨或本地自动语音识别转写。默认 `--asr-backend auto`：中文或未指定语言优先共享 Qwen3-ASR，明确外语视频优先 Whisper。默认只复用同一作品 ID、来源 URL 或本地输入文件指纹的已有输出；同一来源需要重跑时加 `--force`，来源变化时必须使用新的 `--out-dir`。
-7. 如果用户只是快速理解、选题筛选或先拿草稿，且当前 Chrome 已登录抖音网页版，可以跑 `douyin_web_ai_brief.py`；已有可用 `douyin_ai_brief.json` 时先读旧结果。抖音内置 AI 不可用、弱，或 `note_budget.json` 显示低转写密度时，再用 `doubao_video_brief.py` 的 `fast/evidence` 模式备用，但必须标注为假设。
+7. 如果用户只是快速理解、选题筛选或先拿草稿，且当前 Chrome 已登录抖音网页版：Codex 中用 Chrome 控制 Skill 采集可见章节并运行 `import_browser_capture.py`；独立桥接模式可跑 `douyin_web_ai_brief.py`。已有可用 `douyin_ai_brief.json` 时先读旧结果。抖音内置 AI 不可用、弱，或 `note_budget.json` 显示低转写密度时，再用对应浏览器模式的豆包备用路线，但必须标注为假设。
 8. 评论、账号、话题、竞品或批量研究任务先做 `quick-pass` 样本，不要直接对大量视频逐条 ASR；样本结论不足时再升级到 `evidence-pass` 或 `research-pass`。大评论区默认用 `fetch_douyin_comments.py` 抓前 100 条主评论及对应楼中楼；需要完整可见评论时再显式加 `--full`，不要黑盒等待一轮全量抓取。
 9. 每次得到转写、字幕、评论 JSON/CSV、抖音 AI brief 或豆包 brief 后，运行 `archive_dy_note_assets.py` 生成或更新 `assets/`。评论区任务必须保留评论样本或完整评论资产，不能只输出评论摘要。
 10. 写学习笔记前，先打开 `assets/asset_manifest.json`，再按用户需求读取 `transcript.cleaned.md`、`segments.json`、完整评论、`douyin_ai_brief.md`、`doubao_brief.md` 或 `analysis_plan.json`，检查证据是否足以回答研究问题。再打开 `note_budget.json`，按推荐长度和 `writing_guidance` 写学习型笔记；如果 `visual_dependency.needs_visual_review=true`，必须在笔记和回复中提醒画面证据不足，或先补抖音 `问AI / 识别画面`、关键帧/OCR。对外部 AI 回答逐项做证据审计，不要把它们的扩写混成视频原文。
@@ -182,9 +185,25 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
 
 为兼容早期原型，脚本仍会探测旧路径 `%USERPROFILE%\.cache\dy-note\qwen3-asr-venv` 和 `%USERPROFILE%\.cache\douyin-note\qwen3-asr-venv`。
 
-### 5. 从抖音链接完整提取
+### 5. 浏览器取证与从抖音链接完整提取
 
-先按 `web-access` 要求启动并检查 CDP proxy，再运行：
+在 Codex 中先使用 `chrome:control-chrome` 采集可见页面，按 `references/browser-modes.md` 生成 `dy-note-browser-capture-v1` JSON，再导入：
+
+```powershell
+& $py "$skill\scripts\import_browser_capture.py" `
+  ".\browser_capture.json" `
+  --out-dir ".\dy_note_output"
+```
+
+这条路线适合页面元数据、播放验证、抖音 AI 章节和有边界的可见评论样本。只有浏览器能力能安全地产生本地媒体文件时才继续 ASR；否则记录阻塞原因。
+
+独立 CLI 完整提取需要先启动兼容的本地浏览器桥接。默认端点兼容原来的 3456，也可以使用环境变量或参数：
+
+```powershell
+$env:DY_NOTE_BROWSER_ENDPOINT = "http://127.0.0.1:3456"
+```
+
+然后运行：
 
 ```powershell
 & $py "$skill\scripts\extract_douyin_text.py" `
@@ -192,6 +211,12 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
   --out-dir "D:\微信推送\dy_note_output" `
   --asr-model medium `
   --language Chinese
+```
+
+如需指定不同的本地端口，增加：
+
+```powershell
+--browser-endpoint "http://127.0.0.1:4567"
 ```
 
 如果输出目录已有 `transcript.txt`、`segments.json` 和 `metadata.json`，脚本会先核对作品 ID、来源 URL 或本地输入文件 SHA-256；一致时默认复用并跳过浏览器、下载和 ASR。同一来源确实要重跑时加：
@@ -234,14 +259,15 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
   --out-dir ".\dy_note_qwen"
 ```
 
-### 7. 复用已打开的 web-access target
+### 7. 复用已打开的本地桥接 target
 
-如果已经用 `web-access` 打开抖音页面并拿到 target id：
+如果独立浏览器桥接已经打开抖音页面并返回 target id：
 
 ```powershell
 & $py "$skill\scripts\extract_douyin_text.py" `
   "https://www.douyin.com/video/7647145112421633320" `
   --target "CDP_TARGET_ID" `
+  --browser-endpoint "http://127.0.0.1:3456" `
   --keep-tab `
   --out-dir ".\dy_note_output"
 ```
@@ -250,7 +276,7 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
 
 ### 8. 用抖音内置 AI 快速解读视频
 
-先按 `web-access` 要求启动并检查 CDP proxy。脚本会使用当前 Chrome 打开抖音视频页，优先读取页面 `问AI` 生成的 `章节要点` 和时间线；如果传入的是 `jingxuan?modal_id=...`，会自动归一到更稳定的 `/video/<id>` 页面：
+Codex 模式优先用 Chrome 控制 Skill 读取可见的 `问AI` 章节并导入安全采集包。独立桥接模式才运行下面的脚本；它会使用已授权浏览器打开抖音视频页，优先读取页面 `问AI` 生成的 `章节要点` 和时间线。如果传入的是 `jingxuan?modal_id=...`，会自动归一到更稳定的 `/video/<id>` 页面：
 
 ```powershell
 & $py "$skill\scripts\douyin_web_ai_brief.py" `
@@ -276,7 +302,7 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
 
 ### 9. 用已登录豆包作为备用快读
 
-当抖音内置 AI 不可用、弱、或需要交叉对照时，再走豆包备用路线。先按 `web-access` 要求启动并检查 CDP proxy。脚本会自己打开当前 Chrome 的豆包页并确认登录态；未登录时会停止，不会换浏览器：
+当抖音内置 AI 不可用、弱、或需要交叉对照时，再走豆包备用路线。Codex 模式继续使用同一个 Chrome 控制 Skill，并在向豆包提交完整分享文本前确认已登录；独立桥接模式运行下面的脚本。未登录时必须停止，不要换到无登录态浏览器：
 
 ```powershell
 & $py "$skill\scripts\doubao_video_brief.py" --check-login
@@ -423,17 +449,20 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
 
 ## 相关文件
 
-- `scripts/check_environment.py`：检查 web-access proxy、ffmpeg、Whisper、Qwen3-ASR 和本地模型缓存。
+- `scripts/browser_bridge.py`：连接可选的独立本地浏览器桥接，并把端点限制为带端口的回环 HTTP 地址。
+- `scripts/import_browser_capture.py`：导入 Codex Chrome 的 `dy-note-browser-capture-v1` 安全采集包，拒绝凭据、请求签名和签名媒体 URL。
+- `scripts/check_environment.py`：分别检查 Codex Chrome 采集模式、本地浏览器桥接、ffmpeg、Whisper、Qwen3-ASR 和本地模型缓存。
 - `scripts/archive_dy_note_assets.py`：把字幕/转写、完整评论、AI brief、元数据和预算整理成 `assets/` 可复用资产包。
 - `scripts/compute_note_budget.py`：按转写长度、时长、评论量和互动质量生成 `note_budget.json`，指导学习笔记长短，并提示长视频转写过稀时的画面依赖风险。
 - `scripts/create_analysis_plan.py`：按场景模式生成 `analysis_plan.json`，记录研究问题、采样策略、证据阶梯和合成闸门。
 - `scripts/douyin_web_ai_brief.py`：使用当前已登录 Chrome 中的抖音网页版“问AI / 识别画面”提取视频章节要点和时间线。
 - `scripts/doubao_video_brief.py`：备用路线，使用当前已登录 Chrome 中的豆包网页版，对完整抖音分享文本做快速解读、登录态检查和证据分级。
 - `scripts/extract_douyin_text.py`：从抖音链接、本地音频或本地转写文件生成文本素材。
-- `scripts/fetch_douyin_comments.py`：通过 web-access CDP proxy 分阶段抓取抖音主评论和楼中楼，支持主评论 checkpoint、续抓回复、进度输出和覆盖率统计。
+- `scripts/fetch_douyin_comments.py`：通过独立本地浏览器桥接分阶段抓取抖音主评论和楼中楼，支持主评论 checkpoint、续抓回复、进度输出和覆盖率统计。
 - `scripts/inspect_workflow_state.py`：检查输出目录已有产物，推荐下一步并提示哪些步骤不要返工。
 - `scripts/run_qwen_asr.py`：调用 Qwen3-ASR-0.6B，可按 chunk 分段避免显存溢出。
 - `scripts/score_dy_note.py`：把最终 Markdown 与 `note_budget.json` 比较，判断笔记过短、过长或合适。
 - `scripts/setup_qwen_asr_env.py`：创建/更新共享的 Qwen3-ASR Python 环境。
 - `scripts/selftest.py`：轻量自测，覆盖 SRT/Qwen 解析、合段和本地输出生成。
+- `references/browser-modes.md`：Codex Chrome 安全采集契约、独立桥接配置和双模式证据边界。
 - `references/douyin-video-text-notes.md`：实现细节、场景模式、证据分层、已知限制和后续改进建议。

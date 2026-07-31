@@ -155,7 +155,7 @@ def find_comment_base_url(target: str, retries: int = 8, delay: float = 1.0) -> 
             return str(base)
         time.sleep(delay)
     raise DouyinCommentError(
-        "No Douyin comment/list request was observed. Open the page with web-access, "
+        "No Douyin comment/list request was observed. Open the page through the configured local browser bridge, "
         "make sure the comment panel is visible, then rerun with --target."
     )
 
