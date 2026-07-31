@@ -26,6 +26,15 @@ source.
 
 - Do not commit generated `dy_note_*` directories, media, cookies, browser
   profiles, `storageState` files, or signed URLs.
+- Run the standalone bridge only with its dedicated Chrome profile. The bundled
+  launcher refuses to auto-attach to an occupied DevTools port so it cannot
+  silently connect to an unrelated browser.
+- The bridge listens on loopback and requires a random local token stored with
+  user-only permissions under `~/.cache/rimagination-notes/browser-bridge/`.
+  Treat that token and directory as sensitive local state.
+- The evaluation endpoint can act with the privileges of the dedicated browser
+  page. Only trusted local processes should receive the token, and the bridge
+  should be stopped when it is not in use.
 - Review comment assets before sharing them. They may contain public profile
   identifiers and location labels even though they do not contain browser
   credentials.

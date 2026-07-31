@@ -170,7 +170,19 @@ python scripts/import_browser_capture.py `
 
 ### 独立 CLI 模式
 
-直接从链接下载、转写或完整抓取评论时，使用兼容的本地浏览器桥接。默认地址仍兼容原路线，也可以配置：
+直接从链接下载、转写或完整抓取评论时，先安装桥接所需的小型依赖：
+
+```powershell
+python scripts/setup_browser_bridge_env.py
+```
+
+然后启动 DyNote 自带的桥接和专用 Chrome：
+
+```powershell
+python scripts/start_browser_bridge.py
+```
+
+第一次会打开一个独立 Chrome 窗口。需要登录时，只在这个窗口中登录抖音或豆包，并保持启动命令继续运行；DyNote 不会连接你日常使用的 Chrome 配置。默认地址仍兼容原路线，也可以配置：
 
 ```powershell
 $env:DY_NOTE_BROWSER_ENDPOINT = "http://127.0.0.1:3456"
@@ -220,6 +232,8 @@ Qwen3-ASR 虚拟环境默认放在：
 - 备用豆包路线需要你已经在当前 Chrome 登录豆包网页版。
 - Codex 模式使用现成的 Chrome 控制 Skill 读取可见页面，再通过 `import_browser_capture.py` 导入经过约束的 JSON；它不要求 `localhost:3456`。
 - 独立 CLI 模式可通过 `DY_NOTE_BROWSER_ENDPOINT` 或 `--browser-endpoint` 指定本地桥接；只接受带端口的回环 HTTP 地址。
+- 自带桥接绑定 `127.0.0.1`，使用随机本地令牌认证，并拒绝带浏览器 `Origin` 的请求；令牌和专用 Chrome 配置默认位于 `~/.cache/rimagination-notes/browser-bridge/`，不得提交到仓库。
+- 启动器发现调试端口已被占用时会拒绝自动连接，避免误接到日常 Chrome；不要用日常浏览器配置目录启动桥接。
 - DyNote 不读取或保存 Cookie、localStorage、token 等登录凭据；评论请求签名只在浏览器页面内使用。
 - 视频下载路径可能在当前进程内短暂使用签名媒体 URL，但不会把它写入元数据、日志、资产包或最终笔记；元数据写盘前会递归移除签名参数、临时媒体 URL 和相关敏感字段。
 - 评论 JSON 保留原始文本；评论 CSV 会中和以 `= + - @` 开头的单元格，避免用 Excel/WPS 打开时触发公式解析。
@@ -258,6 +272,9 @@ Qwen3-ASR 虚拟环境默认放在：
 
 - `SKILL.md`：Codex 使用这个 skill 时读取的完整工作流说明。
 - `scripts/browser_bridge.py`：校验并连接可选的本地浏览器桥接，只允许回环 HTTP 地址。
+- `scripts/local_browser_bridge.py`：通过 Chrome DevTools 驱动专用 Chrome，并提供带令牌认证的回环桥接 API。
+- `scripts/setup_browser_bridge_env.py`：按哈希安装锁定的 `websocket-client` 依赖。
+- `scripts/start_browser_bridge.py`：启动专用 Chrome 配置和本地桥接；不会自动附加已占用的调试端口。
 - `scripts/import_browser_capture.py`：导入 Codex Chrome 生成的安全可见页面采集包，并拒绝凭据、签名字段和签名媒体 URL。
 - `scripts/check_environment.py`：分别报告 Codex Chrome 采集模式、本地浏览器桥接、ffmpeg、Whisper、Qwen3-ASR 和模型缓存。
 - `scripts/archive_dy_note_assets.py`：把字幕、转写、完整评论、AI brief 和元数据整理成 `assets/` 资产包。

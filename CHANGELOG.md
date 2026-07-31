@@ -6,6 +6,8 @@ All notable changes to this derivative are documented here.
 
 ### Browser compatibility
 
+- Ship an authenticated loopback Chrome DevTools bridge, a dedicated-profile
+  launcher, and a hash-pinned dependency installer for standalone use.
 - Add a Codex Chrome capture route that imports visible page evidence through a
   versioned, sanitized JSON contract.
 - Add a shared local browser bridge client with configurable
@@ -14,9 +16,16 @@ All notable changes to this derivative are documented here.
   explicit loopback HTTP origins.
 - Report Codex Chrome capture and standalone local-bridge readiness separately
   in the environment check.
+- Support Douyin's separate DASH audio stream so blob-backed video pages can
+  still produce a local ASR transcript.
+- Resolve Douyin short links from an already-open target before comment
+  collection.
 
 ### Security
 
+- Authenticate local bridge calls with a random 256-bit token, bind to loopback,
+  reject browser origins/unexpected hosts, restrict navigation, and refuse
+  automatic attachment to an occupied Chrome DevTools port.
 - Reject browser captures containing credentials, browser storage, request
   headers/signatures, or signed media URLs.
 - Keep observed Douyin request signatures inside the browser context.

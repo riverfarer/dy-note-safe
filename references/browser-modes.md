@@ -92,10 +92,21 @@ non-Douyin source URLs, mismatched work IDs, and unsupported schemas. It writes
 
 ## Mode B: local browser bridge
 
-Use this mode for standalone CLI automation when a compatible local bridge is
-already running. The bridge must expose the legacy-compatible `/targets`,
-`/new`, `/eval`, `/clickAt`, and `/close` operations needed by the selected
-script.
+Use this mode for standalone CLI automation. DyNote ships an authenticated
+bridge exposing the legacy-compatible `/targets`, `/new`, `/eval`, `/clickAt`,
+and `/close` operations needed by the selected script.
+
+Install its single pinned dependency, then launch it:
+
+```powershell
+python scripts/setup_browser_bridge_env.py
+python scripts/start_browser_bridge.py
+```
+
+The launcher opens Chrome with a non-default profile under the shared DyNote
+cache and a loopback-only DevTools port. Log into Douyin or Doubao in that
+dedicated window when needed. Keep the launcher process running while using the
+CLI.
 
 The endpoint is configurable:
 
@@ -126,6 +137,28 @@ and fragments are rejected. The default remains
 Use a dedicated browser profile for standalone automation. Do not attach an
 untrusted bridge to a daily browser profile, and do not export cookies or
 storage state to make automation easier.
+
+The bundled bridge adds these controls:
+
+- binds the HTTP service and Chrome DevTools to loopback;
+- authenticates every request with a random 256-bit token stored in a
+  user-only cache file;
+- rejects browser-originated requests and unexpected `Host` headers;
+- permits navigation only to allowlisted Douyin/Doubao HTTPS hosts;
+- rejects JavaScript that requests Cookie or browser credential storage;
+- limits request, selector, target-ID, and navigation inputs;
+- refuses to auto-attach when the requested DevTools port is already occupied.
+
+The generic evaluation endpoint is powerful and is intended only for trusted
+DyNote processes running as the same local user. Stop the bridge after use.
+Never publish its token or profile directory.
+
+Chrome 136 and later ignore remote-debugging flags on the default data
+directory; the dedicated `--user-data-dir` is therefore required as well as
+safer. See Chrome's
+[remote debugging security change](https://developer.chrome.com/blog/remote-debugging-port)
+and the official
+[DevTools Protocol HTTP endpoints](https://chromedevtools.github.io/devtools-protocol/).
 
 ## Evidence and fallback rules
 

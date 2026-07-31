@@ -197,7 +197,16 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
 
 这条路线适合页面元数据、播放验证、抖音 AI 章节和有边界的可见评论样本。只有浏览器能力能安全地产生本地媒体文件时才继续 ASR；否则记录阻塞原因。
 
-独立 CLI 完整提取需要先启动兼容的本地浏览器桥接。默认端点兼容原来的 3456，也可以使用环境变量或参数：
+独立 CLI 完整提取先安装桥接依赖并启动自带的专用 Chrome 桥接：
+
+```powershell
+& $py "$skill\scripts\setup_browser_bridge_env.py"
+& $py "$skill\scripts\start_browser_bridge.py"
+```
+
+第一次会打开独立 Chrome 配置；需要登录时只在这个窗口登录，并保持启动命令运行。不得把桥接指向日常 Chrome 配置。启动器遇到已占用的调试端口会拒绝自动附加。桥接只绑定回环地址，每个请求都使用本地随机令牌认证，并限制导航到抖音/豆包 HTTPS 域名。
+
+默认端点兼容原来的 3456，也可以使用环境变量或参数：
 
 ```powershell
 $env:DY_NOTE_BROWSER_ENDPOINT = "http://127.0.0.1:3456"
@@ -450,6 +459,9 @@ Codex 模式优先用 Chrome 控制 Skill 读取可见的 `问AI` 章节并导�
 ## 相关文件
 
 - `scripts/browser_bridge.py`：连接可选的独立本地浏览器桥接，并把端点限制为带端口的回环 HTTP 地址。
+- `scripts/local_browser_bridge.py`：实现带本地令牌认证、导航限制和输入上限的 Chrome DevTools 回环桥接。
+- `scripts/setup_browser_bridge_env.py`：按哈希安装桥接所需的锁定依赖。
+- `scripts/start_browser_bridge.py`：启动专用 Chrome 配置和桥接，并拒绝自动附加已占用的调试端口。
 - `scripts/import_browser_capture.py`：导入 Codex Chrome 的 `dy-note-browser-capture-v1` 安全采集包，拒绝凭据、请求签名和签名媒体 URL。
 - `scripts/check_environment.py`：分别检查 Codex Chrome 采集模式、本地浏览器桥接、ffmpeg、Whisper、Qwen3-ASR 和本地模型缓存。
 - `scripts/archive_dy_note_assets.py`：把字幕/转写、完整评论、AI brief、元数据和预算整理成 `assets/` 可复用资产包。
