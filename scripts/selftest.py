@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import archive_dy_note_assets as assets
+import browser_bridge as bridge
 import compute_note_budget as budgeter
 import create_analysis_plan as planner
 import douyin_web_ai_brief as dwai
@@ -15,6 +16,26 @@ import extract_douyin_text as dut
 import fetch_douyin_comments as comments
 import inspect_workflow_state as state
 import score_dy_note as scorer
+
+
+def test_browser_bridge_accepts_only_loopback_http_origins() -> None:
+    assert bridge.validate_endpoint("http://127.0.0.1:3456/") == "http://127.0.0.1:3456"
+    assert bridge.validate_endpoint("http://localhost:9222") == "http://localhost:9222"
+    assert bridge.validate_endpoint("http://[::1]:3456") == "http://[::1]:3456"
+
+    for unsafe in (
+        "https://127.0.0.1:3456",
+        "http://example.com:3456",
+        "http://127.0.0.1:3456/private",
+        "http://user:pass@127.0.0.1:3456",
+        "file:///tmp/browser.sock",
+    ):
+        try:
+            bridge.validate_endpoint(unsafe)
+        except bridge.BrowserBridgeError:
+            pass
+        else:
+            raise AssertionError(f"unsafe browser endpoint was accepted: {unsafe}")
 
 
 def test_parse_srt() -> None:
@@ -495,6 +516,7 @@ def test_archive_sample_comments_marks_scope() -> None:
 
 
 def main() -> None:
+    test_browser_bridge_accepts_only_loopback_http_origins()
     test_parse_srt()
     test_make_paragraphs()
     test_build_outputs_from_srt()
