@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import json
 import hmac
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -18,7 +18,6 @@ from typing import Any
 from urllib import error, parse, request
 
 import browser_bridge
-
 
 DEFAULT_CDP_PORT = 9223
 DEFAULT_BRIDGE_PORT = 3456
