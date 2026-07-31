@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:3456"
 ENDPOINT_ENV = "DY_NOTE_BROWSER_ENDPOINT"
+TOKEN_ENV = "DY_NOTE_BROWSER_TOKEN"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+TOKEN_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
 class BrowserBridgeError(RuntimeError):
@@ -51,20 +55,63 @@ def resolve_endpoint(cli_value: str | None = None) -> str:
     return validate_endpoint(cli_value or os.environ.get(ENDPOINT_ENV) or DEFAULT_ENDPOINT)
 
 
+def shared_cache_dir() -> str:
+    return os.path.expanduser(
+        os.environ.get(
+            "RIMAGINATION_NOTE_CACHE",
+            os.path.join("~", ".cache", "rimagination-notes"),
+        )
+    )
+
+
+def default_token_file() -> str:
+    return os.path.join(shared_cache_dir(), "browser-bridge", "token")
+
+
+def validate_token(value: str) -> str:
+    token = (value or "").strip()
+    if not TOKEN_RE.fullmatch(token):
+        raise BrowserBridgeError("Browser bridge token must be a 64-character hexadecimal value.")
+    return token
+
+
+def resolve_token(explicit: str | None = None, token_file: str | None = None) -> str | None:
+    candidate = explicit or os.environ.get(TOKEN_ENV)
+    if candidate:
+        return validate_token(candidate)
+    path = Path(token_file or default_token_file()).expanduser()
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise BrowserBridgeError(f"Could not read browser bridge token file: {exc}") from exc
+    return validate_token(value)
+
+
 class BrowserBridge:
-    def __init__(self, endpoint: str | None = None) -> None:
+    def __init__(
+        self,
+        endpoint: str | None = None,
+        token: str | None = None,
+        token_file: str | None = None,
+    ) -> None:
         self.endpoint = resolve_endpoint(endpoint)
+        self.token = resolve_token(token, token_file)
         self._opener = request.build_opener(request.ProxyHandler({}))
 
     def json(self, method: str, path: str, body: str | None = None, timeout: int = 30) -> Any:
         if not path.startswith("/") or path.startswith("//"):
             raise BrowserBridgeError("Browser bridge path must be relative to the local endpoint.")
         data = body.encode("utf-8") if body is not None else None
+        headers = {"Content-Type": "text/plain; charset=utf-8"}
+        if self.token:
+            headers["X-DyNote-Bridge-Token"] = self.token
         req = request.Request(
             f"{self.endpoint}{path}",
             data=data,
             method=method,
-            headers={"Content-Type": "text/plain; charset=utf-8"},
+            headers=headers,
         )
         try:
             # The endpoint is validated as a fixed loopback HTTP origin.

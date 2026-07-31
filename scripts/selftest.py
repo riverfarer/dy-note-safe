@@ -40,6 +40,27 @@ def test_browser_bridge_accepts_only_loopback_http_origins() -> None:
             raise AssertionError(f"unsafe browser endpoint was accepted: {unsafe}")
 
 
+def test_browser_bridge_reads_and_validates_local_token() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        token_path = Path(tmp) / "token"
+        expected = "ab" * 32
+        token_path.write_text(expected + "\n", encoding="utf-8")
+        assert bridge.resolve_token(token_file=str(token_path)) == expected
+        client = bridge.BrowserBridge(
+            "http://127.0.0.1:3456",
+            token_file=str(token_path),
+        )
+        assert client.token == expected
+
+        token_path.write_text("not-a-token", encoding="utf-8")
+        try:
+            bridge.resolve_token(token_file=str(token_path))
+        except bridge.BrowserBridgeError:
+            pass
+        else:
+            raise AssertionError("invalid browser bridge token was accepted")
+
+
 def test_environment_reports_both_browser_modes() -> None:
     report = environment.build_report("http://127.0.0.1:1")
     browser = report["browser"]
@@ -613,6 +634,7 @@ def test_archive_sample_comments_marks_scope() -> None:
 
 def main() -> None:
     test_browser_bridge_accepts_only_loopback_http_origins()
+    test_browser_bridge_reads_and_validates_local_token()
     test_environment_reports_both_browser_modes()
     test_import_sanitized_browser_capture()
     test_browser_capture_rejects_credentials_and_signed_media_urls()
