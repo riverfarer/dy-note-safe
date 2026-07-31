@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Installation and usage Q&A
+    url: https://github.com/riverfarer/dy-note-safe/discussions/categories/q-a
+    about: Ask for help with installation, login, extraction, transcription, or notes.
+  - name: Feature ideas
+    url: https://github.com/riverfarer/dy-note-safe/discussions/categories/ideas
+    about: Share an idea before it becomes a scoped implementation issue.
+  - name: Security reports
+    url: https://github.com/riverfarer/dy-note-safe/security/policy
+    about: Read the private-reporting guidance before sharing vulnerability details.
+

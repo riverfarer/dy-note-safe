@@ -1,0 +1,123 @@
+name: Bug Report
+description: Report a reproducible DyNote Safe problem
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进 DyNote Safe。请只提交可复现的软件问题。
+
+        安装和使用问题请先前往 [Q&A](https://github.com/riverfarer/dy-note-safe/discussions/categories/q-a)，尚未确定实现方式的建议请前往 [Ideas](https://github.com/riverfarer/dy-note-safe/discussions/categories/ideas)。
+
+        **不要上传 Cookie、浏览器存储、token、请求签名、临时签名媒体 URL 或未经脱敏的私人日志。**
+
+  - type: input
+    id: version
+    attributes:
+      label: DyNote Safe version
+      description: Release tag or commit, for example v0.2.1
+      placeholder: v0.2.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of python --version
+      placeholder: Python 3.13.5
+    validations:
+      required: true
+
+  - type: input
+    id: chrome-version
+    attributes:
+      label: Chrome or Chromium version
+      description: Required for browser-bridge problems; otherwise write N/A
+      placeholder: Chrome 150.0.7871.187 or N/A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: route
+    attributes:
+      label: Affected route
+      options:
+        - Standalone browser bridge
+        - Codex Chrome capture
+        - Video or audio extraction
+        - Whisper or Qwen3-ASR transcription
+        - Douyin AI brief
+        - Comment collection
+        - Asset archiving or note generation
+        - Installation or environment check
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or request
+      description: Paste the command or Agent request after removing private paths and sensitive values
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest repeatable sequence
+      placeholder: |
+        1. Start the dedicated browser bridge
+        2. Open a public Douyin share URL
+        3. Run ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+
+  - type: textarea
+    id: sanitized-logs
+    attributes:
+      label: Sanitized logs
+      description: Optional. Remove tokens, signatures, signed URLs, personal data, and private file paths first.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety and duplicate checks
+      options:
+        - label: I searched existing Issues and Discussions for the same problem.
+          required: true
+        - label: I removed cookies, browser storage, tokens, request signatures, signed media URLs, and private data.
+          required: true
+
