@@ -290,6 +290,18 @@ Qwen3-ASR 虚拟环境默认放在：
 - `references/browser-modes.md`：双浏览器模式、安全采集 JSON 契约和独立桥接配置。
 - `references/douyin-video-text-notes.md`：实现细节、场景模式、证据分层、已知限制和后续改进建议。
 
+## 反馈与社区
+
+欢迎提交真实安装和使用反馈。请按问题类型选择入口，避免把开放式讨论和可执行 Bug 混在一起：
+
+- [版本反馈与问题收集](https://github.com/riverfarer/dy-note-safe/discussions/3)：报告一次真实使用结果，说明系统、版本、成功产物和遇到的问题。
+- [Q&A](https://github.com/riverfarer/dy-note-safe/discussions/categories/q-a)：安装、登录、环境、提取、转写或笔记使用问题。
+- [Ideas](https://github.com/riverfarer/dy-note-safe/discussions/categories/ideas)：尚未形成明确实现范围的功能想法与新场景。
+- [Bug Report](https://github.com/riverfarer/dy-note-safe/issues/new?template=bug-report.yml)：已经确认、可以稳定复现的软件错误。
+- [安全报告](SECURITY.md)：不要在公开 Issue 或 Discussion 中提交 Cookie、token、请求签名、临时媒体 URL 或漏洞敏感细节。
+
+完整贡献与分流规则见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
 ## 社区友链
 
 - [Bili Note](https://github.com/Rimagination/bili-note)：同系列 B 站视频与图文笔记 skill，DyNote 的笔记预算、原始材料优先和学习型笔记思路都继承自它。

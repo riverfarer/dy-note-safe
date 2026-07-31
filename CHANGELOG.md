@@ -4,6 +4,11 @@ All notable changes to this derivative are documented here.
 
 ## Unreleased
 
+### Community
+
+- Add GitHub Discussions feedback routes, a structured and privacy-aware bug
+  report form, and contributor guidance.
+
 ## 0.2.1 - 2026-07-31
 
 ### Reliability
