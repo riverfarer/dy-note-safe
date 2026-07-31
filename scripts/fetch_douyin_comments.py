@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib import parse
 
 import browser_bridge
 
@@ -137,6 +138,13 @@ def extract_aweme_id(url: str) -> str:
     if match:
         return match.group(1)
     raise DouyinCommentError(f"Could not infer Douyin aweme id from URL: {url}")
+
+
+def current_page_url(target: str) -> str:
+    value = eval_js(target, "location.href", timeout=10)
+    if not isinstance(value, str) or not value.startswith("https://"):
+        raise DouyinCommentError("Could not read the current Douyin page URL.")
+    return value
 
 
 def find_comment_base_url(target: str, retries: int = 8, delay: float = 1.0) -> str:
@@ -643,12 +651,15 @@ def main(argv: list[str]) -> int:
     main_delay = args.main_delay if args.main_delay is not None else args.delay
     reply_delay = args.reply_delay if args.reply_delay is not None else args.delay
     max_main_comments = None if args.full or args.max_main_comments <= 0 else args.max_main_comments
-    aweme_id = extract_aweme_id(args.url)
-    basename = args.basename or f"douyin_comments_{aweme_id}"
     target = args.target
     opened_by_script = False
     try:
         source_url = args.url
+        aweme_id = ""
+        try:
+            aweme_id = extract_aweme_id(args.url)
+        except DouyinCommentError:
+            pass
         pages: list[dict[str, Any]]
         resume_is_sample = False
         if args.resume_from_json:
@@ -675,6 +686,15 @@ def main(argv: list[str]) -> int:
             target = open_target(args.url)
             opened_by_script = True
             time.sleep(args.wait)
+        if target:
+            resolved_url = current_page_url(target)
+            if not aweme_id:
+                aweme_id = extract_aweme_id(resolved_url)
+            if "v.douyin.com" in (parse.urlsplit(source_url).hostname or ""):
+                source_url = resolved_url
+        if not aweme_id:
+            raise DouyinCommentError(f"Could not infer Douyin aweme id from URL: {args.url}")
+        basename = args.basename or f"douyin_comments_{aweme_id}"
         base_url = find_comment_base_url(target) if needs_browser and target else ""
 
         if not args.resume_from_json:

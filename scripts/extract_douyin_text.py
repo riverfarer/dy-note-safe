@@ -889,6 +889,46 @@ def find_media_url(info: dict[str, Any]) -> str:
     raise DouyinTextError("Could not find an allowlisted HTTPS media URL on the Douyin page.")
 
 
+def find_audio_media_url(info: dict[str, Any]) -> str | None:
+    candidates = []
+    candidates.extend(str(url) for url in info.get("resources") or [])
+    for video in info.get("videos") or []:
+        if isinstance(video, dict) and video.get("src"):
+            candidates.append(str(video["src"]))
+    for url in candidates:
+        path = parse.urlsplit(url).path.lower()
+        if "media-audio" not in path and "/audio/" not in path:
+            continue
+        try:
+            validate_media_url(url)
+        except DouyinTextError:
+            continue
+        return url
+    return None
+
+
+def collect_downloadable_media(target: str, attempts: int = 10) -> tuple[dict[str, Any], str, bool]:
+    last_error: DouyinTextError | None = None
+    for attempt in range(attempts):
+        info = collect_page_info(target)
+        audio_url = find_audio_media_url(info)
+        if audio_url:
+            return info, audio_url, True
+        try:
+            media_url = find_media_url(info)
+        except DouyinTextError as exc:
+            last_error = exc
+        else:
+            if "media-video" not in parse.urlsplit(media_url).path.lower():
+                return info, media_url, False
+            last_error = DouyinTextError(
+                "Douyin exposed a video-only DASH stream but its separate audio stream is not ready."
+            )
+        if attempt + 1 < attempts:
+            time.sleep(1)
+    raise last_error or DouyinTextError("Could not find downloadable media on the Douyin page.")
+
+
 class ValidatedMediaRedirectHandler(request.HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -1120,7 +1160,7 @@ def extract_from_douyin(
         created_target = True
         time.sleep(2)
     try:
-        info = collect_page_info(browser_target)
+        info, media_url, audio_only = collect_downloadable_media(browser_target)
         metadata = simplify_page_metadata(info, url)
         if out_dir is None:
             out_dir = out_dir_for(metadata, Path.cwd())
@@ -1134,8 +1174,8 @@ def extract_from_douyin(
             if not force:
                 return reuse_existing_outputs(out_dir)
         write_json(out_dir / "page_metadata.json", sanitize_metadata(metadata))
-        media_url = find_media_url(info)
-        media_path = out_dir / f"{metadata.get('aweme_id') or 'douyin_video'}.mp4"
+        media_suffix = ".m4a" if audio_only else ".mp4"
+        media_path = out_dir / f"{metadata.get('aweme_id') or 'douyin_video'}{media_suffix}"
         wav_path = out_dir / f"{metadata.get('aweme_id') or 'douyin_video'}_16k.wav"
         if not media_path.exists():
             download_file(media_url, media_path, referer=metadata.get("source_url") or url)

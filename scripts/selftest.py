@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -97,6 +98,25 @@ def test_local_browser_bridge_restricts_targets_urls_and_javascript() -> None:
             raise AssertionError(f"unsafe bridge JavaScript was accepted: {unsafe_js}")
 
 
+def test_local_browser_bridge_creates_private_token() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        token_path = Path(tmp) / "bridge" / "token"
+        token = local_bridge.ensure_local_token(token_path)
+        assert token == token_path.read_text(encoding="utf-8").strip()
+        assert len(token) == 64
+        if os.name != "nt":
+            assert token_path.stat().st_mode & 0o077 == 0
+
+        symlink_path = Path(tmp) / "bridge" / "linked-token"
+        symlink_path.symlink_to(token_path)
+        try:
+            local_bridge.ensure_local_token(symlink_path)
+        except local_bridge.LocalBridgeError:
+            pass
+        else:
+            raise AssertionError("symlink browser bridge token was accepted")
+
+
 def test_local_browser_bridge_normalizes_cdp_evaluation() -> None:
     assert local_bridge.normalize_evaluation(
         {"id": 1, "result": {"result": {"type": "number", "value": 42}}}
@@ -105,6 +125,15 @@ def test_local_browser_bridge_normalizes_cdp_evaluation() -> None:
     assert local_bridge.normalize_evaluation(
         {"id": 1, "result": {"exceptionDetails": exception}}
     ) == {"exceptionDetails": exception}
+
+
+def test_extract_prefers_separate_dash_audio() -> None:
+    audio_url = "https://v95-web-sz.douyinvod.com/example/media-audio-und-mp4a/?x=1"
+    video_url = "https://v95-web-sz.douyinvod.com/example/media-video-hvc1/?x=1"
+    info = {"resources": [video_url, audio_url]}
+    assert dut.find_audio_media_url(info) == audio_url
+    assert dut.find_media_url(info) == video_url
+    assert dut.find_audio_media_url({"resources": [video_url]}) is None
 
 
 def test_environment_reports_both_browser_modes() -> None:
@@ -682,7 +711,9 @@ def main() -> None:
     test_browser_bridge_accepts_only_loopback_http_origins()
     test_browser_bridge_reads_and_validates_local_token()
     test_local_browser_bridge_restricts_targets_urls_and_javascript()
+    test_local_browser_bridge_creates_private_token()
     test_local_browser_bridge_normalizes_cdp_evaluation()
+    test_extract_prefers_separate_dash_audio()
     test_environment_reports_both_browser_modes()
     test_import_sanitized_browser_capture()
     test_browser_capture_rejects_credentials_and_signed_media_urls()

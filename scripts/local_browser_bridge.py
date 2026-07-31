@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 import time
 from http import HTTPStatus
@@ -104,7 +105,12 @@ def validate_javascript(value: str) -> str:
 def ensure_local_token(path: Path | None = None) -> str:
     token_path = (path or default_token_path()).expanduser()
     token_path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        token_path.parent.chmod(0o700)
     if token_path.exists():
+        file_stat = token_path.lstat()
+        if token_path.is_symlink() or not stat.S_ISREG(file_stat.st_mode):
+            raise LocalBridgeError("Browser bridge token path must be a regular file.")
         try:
             token = browser_bridge.validate_token(token_path.read_text(encoding="utf-8").strip())
         except (OSError, browser_bridge.BrowserBridgeError) as exc:
@@ -112,7 +118,14 @@ def ensure_local_token(path: Path | None = None) -> str:
     else:
         token = secrets.token_hex(32)
         try:
-            token_path.write_text(token + "\n", encoding="utf-8")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(token_path, flags, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(token + "\n")
+        except FileExistsError:
+            return ensure_local_token(token_path)
         except OSError as exc:
             raise LocalBridgeError(f"Could not write browser bridge token: {exc}") from exc
     if os.name != "nt":

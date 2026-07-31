@@ -141,7 +141,13 @@ def main(argv: list[str] | None = None) -> int:
 
     cdp = local_browser_bridge.ChromeDevTools(args.cdp_port)
     chrome_process = None
-    if not args.no_launch and not cdp.ready():
+    if not args.no_launch and cdp.ready():
+        raise local_browser_bridge.LocalBridgeError(
+            f"CDP port {args.cdp_port} is already in use. Refusing to attach automatically; "
+            "stop that instance, select another --cdp-port, or use --no-launch only for a "
+            "dedicated DyNote profile you started yourself."
+        )
+    if not args.no_launch:
         chrome_process = launch_chrome(
             find_chrome(args.chrome),
             args.profile_dir.expanduser(),
