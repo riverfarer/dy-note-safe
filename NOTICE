@@ -1,0 +1,22 @@
+Derivative work notice
+
+This repository contains software derived from:
+
+  DyNote
+  https://github.com/Rimagination/dy-note
+  Upstream revision: 9a65f0d069cacdf5b0d7529f2ce1139d38072b47
+  License: MIT
+
+The upstream MIT license and copyright notice are retained in LICENSE.
+
+Material changes in this derivative include:
+
+- binding reusable outputs to their Douyin source or local input fingerprint;
+- recursively removing signed transport URLs and sensitive metadata;
+- preventing spreadsheet formula injection in exported comment CSV files;
+- marking page-limited or reply-incomplete captures as samples;
+- keeping observed signed request values inside the browser context;
+- adding regression tests and continuous integration.
+
+This derivative is independently maintained and is not an official release of
+the upstream project.

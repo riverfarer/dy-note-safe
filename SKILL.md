@@ -7,7 +7,7 @@ description: "DyNote: systematically and efficiently extract raw Douyin/DY video
 
 DyNote 是面向 Codex 这类 Agent 的抖音学习工具，不是一次性摘要器。核心原则是“数据资产先行，学习笔记后置”：先把字幕/转写、评论、元数据和 AI 快读沉淀为可复用资产，再按用户需求生成可追溯的学习笔记、总结和写作材料。默认目标不是字幕工程文件，而是先落一份原始数据包：`douyin_ai_brief.md`、`douyin_ai_brief.json`、`transcript.cleaned.md`、`transcript.txt`、`segments.json`、`metadata.json`、`note_budget.json`，并用 `assets/` 归档可复用资产。默认把独立字幕轨或本地自动语音识别转写当作事实主干；当转写密度低、任务需要画面理解或用户只要快速筛选时，再用已登录抖音网页版的“问AI / 识别画面”补充，豆包只作为抖音 AI 不可用时的备用快读或待核验假设。
 
-联网或登录态操作必须先使用 `web-access`。不要读取、复制或打印 Cookie、msToken、a_bogus、x-secsdk-web-signature、临时签名视频 URL 等敏感参数；脚本只让已授权 Chrome 页面自己加载内容。
+联网或登录态操作必须先使用 `web-access`。不要读取、复制或打印 Cookie、msToken、a_bogus、x-secsdk-web-signature 等登录凭据或请求签名；评论请求签名只能留在已授权 Chrome 页面内。视频下载路径可以在当前进程内短暂使用临时签名媒体 URL，但不能把它写入元数据、日志、资产包或最终回答。
 
 DyNote 与 Bili Note 共享可复用本地资源。默认共享目录是 `%USERPROFILE%\.cache\rimagination-notes`，Qwen3-ASR 环境默认是 `%USERPROFILE%\.cache\rimagination-notes\qwen3-asr-venv`。如果任一 skill 已经安装过 Qwen3-ASR，另一个 skill 必须优先复用，不要重复安装。Hugging Face、Whisper 和 faster-whisper 缓存按本机通用缓存复用。
 
@@ -77,7 +77,7 @@ DyNote 与 Bili Note 共享可复用本地资源。默认共享目录是 `%USERP
 
 - 默认先建立数据资产，再写学习笔记。不要只把抖音内置 AI、豆包概述或未经审计的本地自动语音识别文本直接当最终笔记。
 - `douyin_ai_brief.json`、`doubao_brief.json`、`transcript.txt`、`segments.json`、`metadata.json`、评论 JSON/CSV 和关键帧截图都属于原始数据；最终学习笔记必须能回到这些材料解释来源。
-- 默认把字幕/转写和完整评论整理成资产包：`assets/transcripts/` 保存字幕、转写和片段；`assets/comments/` 保存完整评论 JSON/CSV、JSONL 明细和可读 Markdown；`assets/asset_manifest.json` 是后续再分析的入口。
+- 默认把字幕/转写和评论整理成资产包：`assets/transcripts/` 保存字幕、转写和片段；`assets/comments/` 保存评论 JSON/CSV、JSONL 明细和可读 Markdown；`assets/asset_manifest.json` 是后续再分析的入口。只有 `coverage.complete=true` 的全量抓取才能标为 full；触及页数上限、游标停滞或楼中楼覆盖不足时必须降级为 sample。
 - `assets/asset_manifest.json` 是事实入口；`learning_note.md` 是从资产生成的一种学习视图，不是资产本身。用户换问题、换场景或要求复核时，优先复用资产重新组织笔记，不要重跑或覆盖原始材料。
 - 写笔记前先确认用户需求：内容学习、脚本复盘、评论洞察、事实核查、写作素材或知识库归档。再从资产中选择证据和结构，不要先脑补结论再找材料。
 - 每次生成转写材料后读取 `note_budget.json`。它根据视频时长、转写字数、片段/证据块、评论数和互动质量给出推荐笔记长度。
@@ -99,7 +99,7 @@ $py = "python"
 3. 如果有输出目录，先运行或心中执行 `inspect_workflow_state.py`，复用已有计划、抖音内置 AI brief、豆包 brief、转写、评论、预算和评分。
 4. 评论、账号、话题、竞品、事实核查或批量研究任务先用 `create_analysis_plan.py` 生成 `analysis_plan.json`；已有计划且目标没变时不要重建。单条视频任务也要在脑中执行同样的证据闸门。
 5. 如果已经有 SRT、Whisper JSON 或 TXT，优先走本地整理路线，避免重复下载和转写；脚本会生成 `note_budget.json`。
-6. 如果用户要求可靠全文、学习笔记、逐句内容、引用、脚本拆解或事实核查，优先使用 `extract_douyin_text.py` 取得字幕轨或本地自动语音识别转写。默认 `--asr-backend auto`：中文或未指定语言优先共享 Qwen3-ASR，明确外语视频优先 Whisper。默认复用已有输出；需要重跑时加 `--force`。
+6. 如果用户要求可靠全文、学习笔记、逐句内容、引用、脚本拆解或事实核查，优先使用 `extract_douyin_text.py` 取得字幕轨或本地自动语音识别转写。默认 `--asr-backend auto`：中文或未指定语言优先共享 Qwen3-ASR，明确外语视频优先 Whisper。默认只复用同一作品 ID、来源 URL 或本地输入文件指纹的已有输出；同一来源需要重跑时加 `--force`，来源变化时必须使用新的 `--out-dir`。
 7. 如果用户只是快速理解、选题筛选或先拿草稿，且当前 Chrome 已登录抖音网页版，可以跑 `douyin_web_ai_brief.py`；已有可用 `douyin_ai_brief.json` 时先读旧结果。抖音内置 AI 不可用、弱，或 `note_budget.json` 显示低转写密度时，再用 `doubao_video_brief.py` 的 `fast/evidence` 模式备用，但必须标注为假设。
 8. 评论、账号、话题、竞品或批量研究任务先做 `quick-pass` 样本，不要直接对大量视频逐条 ASR；样本结论不足时再升级到 `evidence-pass` 或 `research-pass`。大评论区默认用 `fetch_douyin_comments.py` 抓前 100 条主评论及对应楼中楼；需要完整可见评论时再显式加 `--full`，不要黑盒等待一轮全量抓取。
 9. 每次得到转写、字幕、评论 JSON/CSV、抖音 AI brief 或豆包 brief 后，运行 `archive_dy_note_assets.py` 生成或更新 `assets/`。评论区任务必须保留评论样本或完整评论资产，不能只输出评论摘要。
@@ -194,11 +194,13 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
   --language Chinese
 ```
 
-如果输出目录已有 `transcript.txt`、`segments.json` 和 `metadata.json`，脚本默认复用并跳过浏览器、下载和 ASR。确实要重跑时加：
+如果输出目录已有 `transcript.txt`、`segments.json` 和 `metadata.json`，脚本会先核对作品 ID、来源 URL 或本地输入文件 SHA-256；一致时默认复用并跳过浏览器、下载和 ASR。同一来源确实要重跑时加：
 
 ```powershell
 --force
 ```
+
+来源发生变化时必须改用新的 `--out-dir`。即使传入 `--force`，脚本也不会把已绑定目录改作另一个来源，避免旧媒体、字幕和资产包混入新结果。
 
 中文长视频默认优先用 Qwen3-ASR-0.6B。8GB 显存建议保留默认 60 秒分段，避免整段长音频 OOM：
 
@@ -390,7 +392,7 @@ Qwen3-ASR 是中文视频优先使用的本地自动语音识别后端。首次�
   --reply-delay 0.05
 ```
 
-抓完任一阶段都要运行 `archive_dy_note_assets.py`。如果 `coverage.is_sample=true`，最终说明必须提示“这不是全部评论，只是样本”；同时报告 `coverage.total_reported`、`row_count`、主评论数、楼中楼数和 `reported_gap`，不要把平台报告数直接说成已抓取行数。
+抓完任一阶段都要运行 `archive_dy_note_assets.py`。只有 `coverage.complete=true` 才能称为完整可见评论；如果 `coverage.is_sample=true`，最终说明必须提示“这不是全部评论，只是样本”，并报告 `coverage.termination_reasons`、`coverage.total_reported`、`row_count`、主评论数、楼中楼数和 `reported_gap`，不要把平台报告数直接说成已抓取行数。
 
 ## 输出口径
 
