@@ -4,6 +4,8 @@ All notable changes to this derivative are documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-31
+
 ### Browser compatibility
 
 - Ship an authenticated loopback Chrome DevTools bridge, a dedicated-profile
