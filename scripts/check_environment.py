@@ -30,7 +30,8 @@ def command_version(cmd: list[str]) -> str | None:
 
 def proxy_ready() -> bool:
     try:
-        with request.urlopen("http://localhost:3456/targets", timeout=3) as resp:
+        # This URL is a fixed local control-plane endpoint, not external input.
+        with request.urlopen("http://localhost:3456/targets", timeout=3) as resp:  # nosec B310
             return resp.status == 200
     except error.URLError:
         return False

@@ -130,6 +130,34 @@ def test_existing_outputs_do_not_match_a_different_douyin_source() -> None:
         ) is True
 
 
+def test_douyin_source_and_media_urls_are_allowlisted() -> None:
+    assert dut.validate_douyin_source_url("https://v.douyin.com/abc/") == "https://v.douyin.com/abc/"
+    assert (
+        dut.validate_media_url("https://v3-dy-o.zjcdn.com/video/tos/cn/example")
+        == "https://v3-dy-o.zjcdn.com/video/tos/cn/example"
+    )
+
+    for unsafe in (
+        "http://127.0.0.1:8000/private",
+        "https://169.254.169.254/latest/meta-data/",
+        "file:///etc/passwd",
+        "https://attacker.example/video.mp4",
+    ):
+        try:
+            dut.validate_media_url(unsafe)
+        except dut.DouyinTextError:
+            pass
+        else:
+            raise AssertionError(f"unsafe media URL was accepted: {unsafe}")
+
+    try:
+        dut.validate_douyin_source_url("https://attacker.example/video/1234567890123456")
+    except dut.DouyinTextError:
+        pass
+    else:
+        raise AssertionError("non-Douyin source URL was accepted")
+
+
 def test_sanitize_metadata_removes_nested_signed_urls() -> None:
     signed_url = "https://v.douyinvod.com/video.mp4?sign=SECRET&token=TOKEN"
     clean = dut.sanitize_metadata(
@@ -403,6 +431,35 @@ def test_page_limit_truncation_is_never_labeled_full() -> None:
         assert json_path.name.endswith("_sample.json")
 
 
+def test_stalled_comment_cursor_records_the_real_termination_reason() -> None:
+    original_fetch_page = comments.fetch_page
+    try:
+        comments.fetch_page = lambda target, js: {  # type: ignore[assignment]
+            "http_status": 200,
+            "data": {
+                "comments": [{"cid": "c1", "text": "游标未前进"}],
+                "cursor": 0,
+                "has_more": True,
+                "total": 20,
+            },
+        }
+        _, pages = comments.fetch_main_comments(
+            target="target",
+            base_url="https://www.douyin.com/aweme/v1/web/comment/list/",
+            aweme_id="123",
+            count=50,
+            page_limit=5,
+            delay=0,
+            progress_enabled=False,
+            max_main_comments=None,
+        )
+    finally:
+        comments.fetch_page = original_fetch_page  # type: ignore[assignment]
+
+    assert pages[-1]["cursor_stalled"] is True
+    assert pages[-1]["termination_reason"] == "main_cursor_stalled"
+
+
 def test_comment_fetch_javascript_does_not_embed_request_signatures() -> None:
     js = comments.js_fetch_main("123", cursor=0, count=50)
 
@@ -442,6 +499,7 @@ def main() -> None:
     test_make_paragraphs()
     test_build_outputs_from_srt()
     test_existing_outputs_do_not_match_a_different_douyin_source()
+    test_douyin_source_and_media_urls_are_allowlisted()
     test_sanitize_metadata_removes_nested_signed_urls()
     test_create_analysis_plan()
     test_parse_douyin_web_ai_chapters()
@@ -456,6 +514,7 @@ def main() -> None:
     test_fetch_comments_preserves_normalized_rows()
     test_comment_csv_neutralizes_spreadsheet_formulas()
     test_page_limit_truncation_is_never_labeled_full()
+    test_stalled_comment_cursor_records_the_real_termination_reason()
     test_comment_fetch_javascript_does_not_embed_request_signatures()
     test_archive_sample_comments_marks_scope()
     print("selftest: ok")

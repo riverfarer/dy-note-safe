@@ -43,7 +43,8 @@ def http_json(method: str, path: str, body: str | None = None, timeout: int = 30
         headers={"Content-Type": "text/plain; charset=utf-8"},
     )
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        # req is always rooted at the fixed local PROXY constant.
+        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             payload = resp.read().decode("utf-8", errors="replace")
     except error.URLError as exc:
         raise DouyinWebAIError(f"web-access CDP proxy request failed: {exc}") from exc

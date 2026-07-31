@@ -27,6 +27,19 @@ from urllib import error, parse, request
 
 PROXY = "http://localhost:3456"
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-0.6B"
+DOUYIN_SOURCE_HOSTS = (
+    "douyin.com",
+    "iesdouyin.com",
+)
+DOUYIN_MEDIA_HOSTS = (
+    "bytecdn.cn",
+    "bytecdn.com",
+    "byteimg.com",
+    "douyinvod.com",
+    "ibytedtos.com",
+    "pstatp.com",
+    "zjcdn.com",
+)
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -52,7 +65,8 @@ def http_json(method: str, path: str, body: str | None = None, timeout: int = 30
         headers={"Content-Type": "text/plain; charset=utf-8"},
     )
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        # req is always rooted at the fixed local PROXY constant.
+        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             payload = resp.read().decode("utf-8", errors="replace")
     except error.URLError as exc:
         raise DouyinTextError(f"CDP proxy request failed: {exc}") from exc
@@ -92,6 +106,35 @@ def extract_first_url(text: str) -> str:
     if not match:
         raise DouyinTextError("No URL found in the Douyin share text.")
     return match.group(0).rstrip(").,，。")
+
+
+def host_matches_allowlist(host: str, allowed_hosts: tuple[str, ...]) -> bool:
+    normalized = host.rstrip(".").lower()
+    return any(normalized == allowed or normalized.endswith("." + allowed) for allowed in allowed_hosts)
+
+
+def validate_https_url(url: str, allowed_hosts: tuple[str, ...], label: str) -> str:
+    try:
+        parsed = parse.urlsplit(url)
+    except ValueError as exc:
+        raise DouyinTextError(f"Invalid {label} URL.") from exc
+    host = parsed.hostname or ""
+    if (
+        parsed.scheme.lower() != "https"
+        or not host_matches_allowlist(host, allowed_hosts)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise DouyinTextError(f"Blocked untrusted {label} URL: scheme or host is not allowlisted.")
+    return url
+
+
+def validate_douyin_source_url(url: str) -> str:
+    return validate_https_url(url, DOUYIN_SOURCE_HOSTS, "Douyin source")
+
+
+def validate_media_url(url: str) -> str:
+    return validate_https_url(url, DOUYIN_MEDIA_HOSTS, "Douyin media")
 
 
 def infer_aweme_id(text: str) -> str | None:
@@ -844,18 +887,38 @@ def find_media_url(info: dict[str, Any]) -> str:
             candidates.append(str(video["src"]))
     candidates.extend(str(url) for url in info.get("resources") or [])
     for url in candidates:
-        if url.startswith("http") and not url.startswith("blob:"):
+        try:
+            validate_media_url(url)
+        except DouyinTextError:
+            continue
+        else:
             return url
-    raise DouyinTextError("Could not find a downloadable media URL on the Douyin page.")
+    raise DouyinTextError("Could not find an allowlisted HTTPS media URL on the Douyin page.")
+
+
+class ValidatedMediaRedirectHandler(request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> request.Request | None:
+        validate_media_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def download_file(url: str, out_path: Path, referer: str | None = None) -> None:
+    validate_media_url(url)
     headers = {"User-Agent": DEFAULT_USER_AGENT}
     if referer:
         headers["Referer"] = referer
     req = request.Request(url, headers=headers)
+    opener = request.build_opener(ValidatedMediaRedirectHandler())
     try:
-        with request.urlopen(req, timeout=120) as resp, out_path.open("wb") as fh:
+        with opener.open(req, timeout=120) as resp, out_path.open("wb") as fh:
             shutil.copyfileobj(resp, fh)
     except error.URLError as exc:
         raise DouyinTextError(f"Media download failed: {exc}") from exc
@@ -1047,7 +1110,7 @@ def extract_from_douyin(
     qwen_max_new_tokens: int,
     qwen_chunk_seconds: float,
 ) -> dict[str, Any]:
-    url = extract_first_url(source_text)
+    url = validate_douyin_source_url(extract_first_url(source_text))
     if out_dir is not None and core_outputs_ready(out_dir):
         if not existing_outputs_match_source(out_dir, source_text):
             raise DouyinTextError(

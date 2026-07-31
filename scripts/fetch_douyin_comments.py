@@ -100,7 +100,8 @@ def http_json(method: str, path: str, body: str | None = None, timeout: int = 30
         headers={"Content-Type": "text/plain; charset=utf-8"},
     )
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        # req is always rooted at the fixed local PROXY constant.
+        with request.urlopen(req, timeout=timeout) as resp:  # nosec B310
             payload = resp.read().decode("utf-8", errors="replace")
     except error.URLError as exc:
         raise DouyinCommentError(f"CDP proxy request failed: {exc}") from exc
@@ -296,7 +297,22 @@ def fetch_main_comments(
             page["capped_by_max_main_comments"] = True
             page["max_main_comments"] = max_main_comments
         next_cursor = data.get("cursor")
-        if capped or not page_comments or not data.get("has_more") or next_cursor in (None, cursor):
+        if capped:
+            page["termination_reason"] = "max_main_comments"
+            break
+        if not page_comments:
+            if data.get("has_more"):
+                page["cursor_stalled"] = True
+                page["termination_reason"] = "main_empty_page_with_more"
+            else:
+                page["termination_reason"] = "main_exhausted"
+            break
+        if not data.get("has_more"):
+            page["termination_reason"] = "main_exhausted"
+            break
+        if next_cursor in (None, cursor):
+            page["cursor_stalled"] = True
+            page["termination_reason"] = "main_cursor_stalled"
             break
         cursor = int(next_cursor)
         if progress_every and len(pages) % progress_every == 0:
@@ -310,7 +326,7 @@ def fetch_main_comments(
                 elapsed_seconds=round(time.monotonic() - started_at, 1),
             )
         time.sleep(delay)
-    if pages and pages[-1].get("has_more") and not pages[-1].get("capped_by_max_main_comments"):
+    if pages and pages[-1].get("has_more") and not pages[-1].get("termination_reason"):
         pages[-1]["truncated_by_page_limit"] = True
         pages[-1]["termination_reason"] = "main_page_limit"
     return comments, pages
@@ -357,6 +373,7 @@ def fetch_replies(
                         "request_cursor": cursor,
                         "expected": total,
                         "error": str(exc),
+                        "termination_reason": "reply_error",
                     }
                 )
                 break
@@ -381,7 +398,19 @@ def fetch_replies(
                     seen.add(cid)
                     reply_rows.append({"parent_cid": parent_cid, "raw": reply})
             next_cursor = data.get("cursor")
-            if not replies or not data.get("has_more") or next_cursor in (None, cursor):
+            if not replies:
+                if data.get("has_more"):
+                    reply_pages[-1]["cursor_stalled"] = True
+                    reply_pages[-1]["termination_reason"] = "reply_empty_page_with_more"
+                else:
+                    reply_pages[-1]["termination_reason"] = "reply_exhausted"
+                break
+            if not data.get("has_more"):
+                reply_pages[-1]["termination_reason"] = "reply_exhausted"
+                break
+            if next_cursor in (None, cursor):
+                reply_pages[-1]["cursor_stalled"] = True
+                reply_pages[-1]["termination_reason"] = "reply_cursor_stalled"
                 break
             cursor = int(next_cursor)
             time.sleep(delay)
