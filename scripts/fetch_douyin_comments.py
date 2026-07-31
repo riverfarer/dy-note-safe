@@ -20,6 +20,7 @@ from urllib import error, parse, request
 
 
 PROXY = "http://localhost:3456"
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
 CSV_FIELDS = [
     "row_index",
     "level",
@@ -68,6 +69,20 @@ def is_normalized_row(row: dict[str, Any]) -> bool:
 
 def main_comments_capped(pages: list[dict[str, Any]]) -> bool:
     return any(bool(page.get("capped_by_max_main_comments")) for page in pages)
+
+
+def main_comments_incomplete(pages: list[dict[str, Any]]) -> bool:
+    return any(
+        bool(page.get("truncated_by_page_limit") or page.get("cursor_stalled") or page.get("error"))
+        for page in pages
+    )
+
+
+def replies_incomplete(reply_pages: list[dict[str, Any]]) -> bool:
+    return any(
+        bool(page.get("truncated_by_page_limit") or page.get("cursor_stalled") or page.get("error"))
+        for page in reply_pages
+    )
 
 
 def output_label(no_replies: bool, is_sample: bool) -> str:
@@ -137,7 +152,10 @@ def find_comment_base_url(target: str, retries: int = 8, delay: float = 1.0) -> 
     js = r"""
 (() => {
   const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
-  return urls.find(u => u.includes('/aweme/v1/web/comment/list/')) || '';
+  const observed = urls.find(u => u.includes('/aweme/v1/web/comment/list/')) || '';
+  if (!observed) return '';
+  const u = new URL(observed);
+  return `${u.origin}${u.pathname}`;
 })()
 """
     for _ in range(retries):
@@ -164,10 +182,15 @@ def fetch_page(target: str, js: str) -> dict[str, Any]:
     return data
 
 
-def js_fetch_main(base_url: str, aweme_id: str, cursor: int, count: int) -> str:
+def js_fetch_main(aweme_id: str, cursor: int, count: int, fallback_base_url: str = "") -> str:
     return f"""
 (async () => {{
-  const base = {json.dumps(base_url)};
+  const observed = performance.getEntriesByType('resource')
+    .map(e => e.name)
+    .reverse()
+    .find(url => url.includes('/aweme/v1/web/comment/list/'));
+  const base = observed || {json.dumps(fallback_base_url)};
+  if (!base) return JSON.stringify({{error: 'No observed Douyin comment request is available.'}});
   const awemeId = {json.dumps(aweme_id)};
   const u = new URL(base);
   u.pathname = '/aweme/v1/web/comment/list/';
@@ -186,10 +209,21 @@ def js_fetch_main(base_url: str, aweme_id: str, cursor: int, count: int) -> str:
 """
 
 
-def js_fetch_replies(base_url: str, aweme_id: str, comment_id: str, cursor: int, count: int) -> str:
+def js_fetch_replies(
+    aweme_id: str,
+    comment_id: str,
+    cursor: int,
+    count: int,
+    fallback_base_url: str = "",
+) -> str:
     return f"""
 (async () => {{
-  const base = {json.dumps(base_url)};
+  const observed = performance.getEntriesByType('resource')
+    .map(e => e.name)
+    .reverse()
+    .find(url => url.includes('/aweme/v1/web/comment/list/'));
+  const base = observed || {json.dumps(fallback_base_url)};
+  if (!base) return JSON.stringify({{error: 'No observed Douyin comment request is available.'}});
   const awemeId = {json.dumps(aweme_id)};
   const commentId = {json.dumps(comment_id)};
   const u = new URL(base);
@@ -232,7 +266,7 @@ def fetch_main_comments(
     started_at = started_at or time.monotonic()
     cursor = 0
     for _ in range(page_limit):
-        got = fetch_page(target, js_fetch_main(base_url, aweme_id, cursor, count))
+        got = fetch_page(target, js_fetch_main(aweme_id, cursor, count, base_url))
         data = got.get("data") or {}
         page_comments = data.get("comments") or []
         page = {
@@ -276,6 +310,9 @@ def fetch_main_comments(
                 elapsed_seconds=round(time.monotonic() - started_at, 1),
             )
         time.sleep(delay)
+    if pages and pages[-1].get("has_more") and not pages[-1].get("capped_by_max_main_comments"):
+        pages[-1]["truncated_by_page_limit"] = True
+        pages[-1]["termination_reason"] = "main_page_limit"
     return comments, pages
 
 
@@ -311,7 +348,7 @@ def fetch_replies(
         max_pages = min(page_limit, max(1, (total + count - 1) // count + 2))
         for _ in range(max_pages):
             try:
-                got = fetch_page(target, js_fetch_replies(base_url, aweme_id, parent_cid, cursor, count))
+                got = fetch_page(target, js_fetch_replies(aweme_id, parent_cid, cursor, count, base_url))
             except DouyinCommentError as exc:
                 reply_pages.append(
                     {
@@ -348,6 +385,14 @@ def fetch_replies(
                 break
             cursor = int(next_cursor)
             time.sleep(delay)
+        else:
+            if (
+                reply_pages
+                and reply_pages[-1].get("parent_cid") == parent_cid
+                and reply_pages[-1].get("has_more")
+            ):
+                reply_pages[-1]["truncated_by_page_limit"] = True
+                reply_pages[-1]["termination_reason"] = "reply_page_limit"
         if progress_every and (index % progress_every == 0 or index == len(parents)):
             progress(
                 progress_enabled,
@@ -410,6 +455,19 @@ def normalize_comment(c: dict[str, Any], level: str, aweme_id: str, parent_cid: 
     }
 
 
+def neutralize_csv_formula(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    candidate = value.lstrip(" \t\r\n")
+    if candidate.startswith(CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def csv_safe_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: neutralize_csv_formula(row.get(field, "")) for field in CSV_FIELDS}
+
+
 def write_outputs(
     out_dir: Path,
     basename: str,
@@ -433,7 +491,23 @@ def write_outputs(
     expected_replies = sum(reply_total(c) for c in main_comments)
     parents_with_replies = sum(1 for c in main_comments if reply_total(c))
     capped = main_comments_capped(pages)
-    is_sample = output_kind in {"sample", "main_only_sample"} or capped
+    main_incomplete = main_comments_incomplete(pages)
+    includes_replies = not output_kind.startswith("main_only")
+    reply_incomplete = includes_replies and (
+        replies_incomplete(reply_pages) or (expected_replies > len(replies))
+    )
+    complete = not capped and not main_incomplete and not reply_incomplete
+    is_sample = output_kind in {"sample", "main_only_sample"} or not complete
+    output_kind = output_label(no_replies=not includes_replies, is_sample=is_sample)
+    termination_reasons = [
+        str(page.get("termination_reason"))
+        for page in [*pages, *reply_pages]
+        if page.get("termination_reason")
+    ]
+    if capped:
+        termination_reasons.append("max_main_comments")
+    if reply_incomplete and expected_replies > len(replies):
+        termination_reasons.append("reply_coverage_gap")
     coverage = {
         "total_reported": total_reported,
         "visible_rows": len(rows),
@@ -447,6 +521,10 @@ def write_outputs(
         "sample_main_comment_limit": sample_main_comment_limit,
         "main_comments_capped": capped,
         "full_requested": full_requested,
+        "complete": complete,
+        "main_fetch_incomplete": main_incomplete,
+        "reply_fetch_incomplete": reply_incomplete,
+        "termination_reasons": sorted(set(termination_reasons)),
     }
     if is_sample:
         coverage["sampling_note"] = (
@@ -480,7 +558,7 @@ def write_outputs(
     with csv_path.open("w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(csv_safe_row(row) for row in rows)
     return json_path, csv_path, payload
 
 

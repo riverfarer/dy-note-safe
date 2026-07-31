@@ -99,6 +99,47 @@ def test_build_outputs_from_srt() -> None:
         assert any("ASR" in item for item in workflow["avoid_rework"])
 
 
+def test_existing_outputs_do_not_match_a_different_douyin_source() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        (out_dir / "transcript.txt").write_text("旧视频文本", encoding="utf-8")
+        (out_dir / "segments.json").write_text('[{"text":"旧视频文本"}]', encoding="utf-8")
+        (out_dir / "metadata.json").write_text(
+            '{"source_url":"https://www.douyin.com/video/1111111111111111",'
+            '"input_url":"https://www.douyin.com/video/1111111111111111",'
+            '"aweme_id":"1111111111111111"}',
+            encoding="utf-8",
+        )
+
+        assert dut.existing_outputs_match_source(
+            out_dir,
+            "https://www.douyin.com/video/2222222222222222",
+        ) is False
+        assert dut.existing_outputs_match_source(
+            out_dir,
+            "https://www.douyin.com/video/1111111111111111",
+        ) is True
+
+
+def test_sanitize_metadata_removes_nested_signed_urls() -> None:
+    signed_url = "https://v.douyinvod.com/video.mp4?sign=SECRET&token=TOKEN"
+    clean = dut.sanitize_metadata(
+        {
+            "desc": "公开标题",
+            "official_tracks": [{"kind": "captions", "src": signed_url}],
+            "nested": {"video_url": signed_url, "safe": "保留"},
+            "video_url": signed_url,
+        }
+    )
+    serialized = json.dumps(clean, ensure_ascii=False)
+
+    assert "SECRET" not in serialized
+    assert "TOKEN" not in serialized
+    assert clean["desc"] == "公开标题"
+    assert clean["official_tracks"][0]["kind"] == "captions"
+    assert clean["nested"]["safe"] == "保留"
+
+
 def test_create_analysis_plan() -> None:
     plan = planner.build_plan(
         mode="topic-research",
@@ -282,6 +323,84 @@ def test_fetch_comments_preserves_normalized_rows() -> None:
         assert payload["coverage"]["reported_gap"] == 9
 
 
+def test_comment_csv_neutralizes_spreadsheet_formulas() -> None:
+    formula = '=HYPERLINK("https://attacker.example","click")'
+    with tempfile.TemporaryDirectory() as tmp:
+        _, csv_path, payload = comments.write_outputs(
+            out_dir=Path(tmp),
+            basename="comments_formula_test",
+            source_url="https://www.douyin.com/video/123",
+            aweme_id="123",
+            main_comments=[
+                {
+                    "cid": "c1",
+                    "text": formula,
+                    "user": {"nickname": "+SUM(1,1)"},
+                }
+            ],
+            replies=[],
+            pages=[{"total": 1, "has_more": False}],
+            reply_pages=[],
+        )
+        csv_text = csv_path.read_text(encoding="utf-8-sig")
+
+        assert payload["rows"][0]["text"] == formula
+        assert "'=HYPERLINK" in csv_text
+        assert "\"'+SUM(1,1)\"" in csv_text
+
+
+def test_page_limit_truncation_is_never_labeled_full() -> None:
+    original_fetch_page = comments.fetch_page
+    try:
+        comments.fetch_page = lambda target, js: {  # type: ignore[assignment]
+            "http_status": 200,
+            "data": {
+                "comments": [{"cid": "c1", "text": "第一页"}],
+                "cursor": 1,
+                "has_more": True,
+                "total": 999,
+            },
+        }
+        main_rows, pages = comments.fetch_main_comments(
+            target="target",
+            base_url="https://www.douyin.com/aweme/v1/web/comment/list/",
+            aweme_id="123",
+            count=50,
+            page_limit=1,
+            delay=0,
+            progress_enabled=False,
+            max_main_comments=None,
+        )
+    finally:
+        comments.fetch_page = original_fetch_page  # type: ignore[assignment]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        json_path, _, payload = comments.write_outputs(
+            out_dir=Path(tmp),
+            basename="comments_truncated_test",
+            source_url="https://www.douyin.com/video/123",
+            aweme_id="123",
+            main_comments=main_rows,
+            replies=[],
+            pages=pages,
+            reply_pages=[],
+            output_kind="full",
+            full_requested=True,
+        )
+
+        assert payload["coverage"]["complete"] is False
+        assert payload["is_sample"] is True
+        assert payload["output_kind"] == "sample"
+        assert json_path.name.endswith("_sample.json")
+
+
+def test_comment_fetch_javascript_does_not_embed_request_signatures() -> None:
+    js = comments.js_fetch_main("123", cursor=0, count=50)
+
+    assert "SECRET" not in js
+    assert "a_bogus=SECRET" not in js
+
+
 def test_archive_sample_comments_marks_scope() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(tmp)
@@ -313,6 +432,8 @@ def main() -> None:
     test_parse_srt()
     test_make_paragraphs()
     test_build_outputs_from_srt()
+    test_existing_outputs_do_not_match_a_different_douyin_source()
+    test_sanitize_metadata_removes_nested_signed_urls()
     test_create_analysis_plan()
     test_parse_douyin_web_ai_chapters()
     test_normalize_douyin_web_ai_source_url()
@@ -324,6 +445,9 @@ def main() -> None:
     test_sparse_transcript_warns_visual_dependency()
     test_archive_assets_includes_comments_and_transcript()
     test_fetch_comments_preserves_normalized_rows()
+    test_comment_csv_neutralizes_spreadsheet_formulas()
+    test_page_limit_truncation_is_never_labeled_full()
+    test_comment_fetch_javascript_does_not_embed_request_signatures()
     test_archive_sample_comments_marks_scope()
     print("selftest: ok")
 

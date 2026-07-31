@@ -367,6 +367,50 @@ def core_outputs_ready(out_dir: Path) -> bool:
     return all((out_dir / name).exists() for name in ("transcript.txt", "segments.json", "metadata.json"))
 
 
+def normalize_url_for_identity(value: str) -> str:
+    try:
+        parsed = parse.urlsplit(value.strip())
+    except ValueError:
+        return value.strip()
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return value.strip()
+    query = parse.urlencode(sorted(parse.parse_qsl(parsed.query, keep_blank_values=True)))
+    path = parsed.path.rstrip("/") or "/"
+    return parse.urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
+
+
+def existing_outputs_match_source(out_dir: Path, source_text: str) -> bool:
+    if not core_outputs_ready(out_dir):
+        return False
+    try:
+        metadata = load_metadata(out_dir / "metadata.json")
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+
+    expected_aweme_id = infer_aweme_id(source_text)
+    stored_aweme_id = str(metadata.get("aweme_id") or "")
+    if not stored_aweme_id:
+        for key in ("input_url", "source_url", "url"):
+            stored_aweme_id = infer_aweme_id(str(metadata.get(key) or "")) or ""
+            if stored_aweme_id:
+                break
+    if expected_aweme_id:
+        return bool(stored_aweme_id and stored_aweme_id == expected_aweme_id)
+
+    try:
+        expected_url = normalize_url_for_identity(extract_first_url(source_text))
+    except DouyinTextError:
+        return False
+    stored_urls = {
+        normalize_url_for_identity(str(metadata.get(key) or ""))
+        for key in ("input_url", "source_url", "url")
+        if metadata.get(key)
+    }
+    return expected_url in stored_urls
+
+
 def newest_mtime(paths: list[Path]) -> float:
     return max((path.stat().st_mtime for path in paths if path.exists()), default=0.0)
 
@@ -504,16 +548,81 @@ def build_outputs(
     return sanitized
 
 
+SENSITIVE_METADATA_KEYS = {
+    "a_bogus",
+    "bit_rate",
+    "cookie",
+    "download_url",
+    "media_url",
+    "mstoken",
+    "ms_token",
+    "play_addr",
+    "token",
+    "video_url",
+    "x-secsdk-web-signature",
+}
+SENSITIVE_QUERY_KEYS = {
+    "a_bogus",
+    "authorization",
+    "cookie",
+    "expires",
+    "msToken",
+    "signature",
+    "sign",
+    "token",
+    "x-secsdk-web-signature",
+}
+TEMPORARY_MEDIA_HOST_MARKERS = (
+    "douyinvod.com",
+    "bytecdn",
+    "byteimg",
+    "ibytedtos.com",
+)
+_DROP_METADATA_VALUE = object()
+
+
+def string_contains_sensitive_transport(value: str) -> bool:
+    if not value.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = parse.urlsplit(value)
+    except ValueError:
+        return True
+    query_keys = {key.lower() for key, _ in parse.parse_qsl(parsed.query, keep_blank_values=True)}
+    sensitive_query_keys = {key.lower() for key in SENSITIVE_QUERY_KEYS}
+    host = (parsed.hostname or "").lower()
+    return bool(
+        query_keys & sensitive_query_keys
+        or any(marker in host for marker in TEMPORARY_MEDIA_HOST_MARKERS)
+    )
+
+
+def sanitize_metadata_value(value: Any, key: str | None = None) -> Any:
+    normalized_key = (key or "").lower()
+    if normalized_key in SENSITIVE_METADATA_KEYS or "signature" in normalized_key:
+        return _DROP_METADATA_VALUE
+    if isinstance(value, dict):
+        clean_dict: dict[str, Any] = {}
+        for child_key, child_value in value.items():
+            clean_value = sanitize_metadata_value(child_value, str(child_key))
+            if clean_value is not _DROP_METADATA_VALUE:
+                clean_dict[str(child_key)] = clean_value
+        return clean_dict
+    if isinstance(value, (list, tuple)):
+        clean_list = []
+        for item in value:
+            clean_value = sanitize_metadata_value(item)
+            if clean_value is not _DROP_METADATA_VALUE:
+                clean_list.append(clean_value)
+        return clean_list
+    if isinstance(value, str) and string_contains_sensitive_transport(value):
+        return _DROP_METADATA_VALUE
+    return value
+
+
 def sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    blocked = {"media_url", "video_url", "download_url", "play_addr", "bit_rate"}
-    clean: dict[str, Any] = {}
-    for key, value in metadata.items():
-        if key in blocked:
-            continue
-        if isinstance(value, str) and ("douyinvod.com" in value or "byte" in value and "sign" in value):
-            continue
-        clean[key] = value
-    return clean
+    clean = sanitize_metadata_value(metadata)
+    return clean if isinstance(clean, dict) else {}
 
 
 def build_from_local_transcript(
@@ -883,8 +992,14 @@ def extract_from_douyin(
     qwen_chunk_seconds: float,
 ) -> dict[str, Any]:
     url = extract_first_url(source_text)
-    if out_dir is not None and not force and core_outputs_ready(out_dir):
-        return reuse_existing_outputs(out_dir)
+    if out_dir is not None and core_outputs_ready(out_dir):
+        if not existing_outputs_match_source(out_dir, source_text):
+            raise DouyinTextError(
+                "The output directory belongs to a different or unverifiable Douyin source. "
+                "Use a new --out-dir; --force only rebuilds the same source."
+            )
+        if not force:
+            return reuse_existing_outputs(out_dir)
     created_target = False
     if target:
         browser_target = target
@@ -898,8 +1013,14 @@ def extract_from_douyin(
         if out_dir is None:
             out_dir = out_dir_for(metadata, Path.cwd())
         out_dir.mkdir(parents=True, exist_ok=True)
-        if not force and core_outputs_ready(out_dir):
-            return reuse_existing_outputs(out_dir)
+        if core_outputs_ready(out_dir):
+            if not existing_outputs_match_source(out_dir, source_text):
+                raise DouyinTextError(
+                    "The output directory belongs to a different or unverifiable Douyin source. "
+                    "Use a new --out-dir; --force only rebuilds the same source."
+                )
+            if not force:
+                return reuse_existing_outputs(out_dir)
         write_json(out_dir / "page_metadata.json", sanitize_metadata(metadata))
         media_url = find_media_url(info)
         media_path = out_dir / f"{metadata.get('aweme_id') or 'douyin_video'}.mp4"
@@ -979,10 +1100,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.out_dir and not args.force and core_outputs_ready(args.out_dir):
-            report = reuse_existing_outputs(args.out_dir)
-            print(json.dumps(report, ensure_ascii=False, indent=2))
-            return 0
         if args.from_srt:
             out_dir = args.out_dir or Path.cwd() / f"dy_note_{args.from_srt.stem}"
             report = reuse_existing_outputs(out_dir) if not args.force and core_outputs_ready(out_dir) else build_from_local_transcript(args.from_srt, "srt", out_dir, args.metadata_json, args.source_url)
