@@ -14,6 +14,7 @@ import create_analysis_plan as planner
 import douyin_web_ai_brief as dwai
 import extract_douyin_text as dut
 import fetch_douyin_comments as comments
+import import_browser_capture as capture_import
 import inspect_workflow_state as state
 import score_dy_note as scorer
 
@@ -36,6 +37,89 @@ def test_browser_bridge_accepts_only_loopback_http_origins() -> None:
             pass
         else:
             raise AssertionError(f"unsafe browser endpoint was accepted: {unsafe}")
+
+
+def test_import_sanitized_browser_capture() -> None:
+    payload = {
+        "schema": "dy-note-browser-capture-v1",
+        "capture_method": "codex-chrome",
+        "captured_at": "2026-07-31T00:00:00Z",
+        "source": {
+            "share_url": "https://v.douyin.com/example/",
+            "canonical_url": "https://www.douyin.com/video/7654321098765432",
+            "aweme_id": "7654321098765432",
+            "title": "浏览器采集测试",
+            "author": "测试作者",
+            "duration_seconds": 30,
+        },
+        "login_observed": True,
+        "video_playback_observed": True,
+        "evidence_grade": "visible-page-observation",
+        "douyin_ai": {
+            "status": "ok",
+            "evidence_level": "douyin-web-ai-chapters",
+            "summary": "这是页面可见的 AI 摘要。",
+            "timeline": [{"time": "00:01", "title": "开场", "desc": "提出问题"}],
+            "limitations": ["不是完整字幕。"],
+        },
+        "comments": {
+            "capture_kind": "visible-page-sample",
+            "comments": [
+                {
+                    "level": "main",
+                    "cid": "c1",
+                    "nickname": "观众甲",
+                    "text": "页面可见评论",
+                }
+            ],
+            "coverage": {"termination_reasons": ["visible-page-only"]},
+        },
+        "limitations": ["没有下载媒体文件。"],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        capture_path = Path(tmp) / "capture.json"
+        out_dir = Path(tmp) / "out"
+        capture_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        report = capture_import.import_capture(capture_path, out_dir)
+
+        assert report["status"] == "ok"
+        assert report["capture_method"] == "codex-chrome"
+        assert report["asset_counts"]["comment_rows"] == 1
+        assert (out_dir / "page_metadata.json").exists()
+        assert (out_dir / "douyin_ai_brief.md").exists()
+        assert (out_dir / "assets" / "comments" / "comments.sample.json").exists()
+        page_metadata = json.loads((out_dir / "page_metadata.json").read_text(encoding="utf-8"))
+        assert page_metadata["login_observed"] is True
+        assert page_metadata["aweme_id"] == "7654321098765432"
+
+
+def test_browser_capture_rejects_credentials_and_signed_media_urls() -> None:
+    base = {
+        "schema": "dy-note-browser-capture-v1",
+        "capture_method": "codex-chrome",
+        "source": {
+            "canonical_url": "https://www.douyin.com/video/7654321098765432",
+            "aweme_id": "7654321098765432",
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        capture_path = Path(tmp) / "capture.json"
+        for unsafe in (
+            {**base, "cookies": [{"name": "session", "value": "SECRET"}]},
+            {
+                **base,
+                "media": {
+                    "url": "https://v3.douyinvod.com/video.mp4?sign=SECRET&token=TOKEN"
+                },
+            },
+        ):
+            capture_path.write_text(json.dumps(unsafe), encoding="utf-8")
+            try:
+                capture_import.read_capture(capture_path)
+            except capture_import.BrowserCaptureError:
+                pass
+            else:
+                raise AssertionError("unsafe browser capture was accepted")
 
 
 def test_parse_srt() -> None:
@@ -517,6 +601,8 @@ def test_archive_sample_comments_marks_scope() -> None:
 
 def main() -> None:
     test_browser_bridge_accepts_only_loopback_http_origins()
+    test_import_sanitized_browser_capture()
+    test_browser_capture_rejects_credentials_and_signed_media_urls()
     test_parse_srt()
     test_make_paragraphs()
     test_build_outputs_from_srt()
