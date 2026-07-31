@@ -17,6 +17,7 @@ import extract_douyin_text as dut
 import fetch_douyin_comments as comments
 import import_browser_capture as capture_import
 import inspect_workflow_state as state
+import local_browser_bridge as local_bridge
 import score_dy_note as scorer
 
 
@@ -59,6 +60,51 @@ def test_browser_bridge_reads_and_validates_local_token() -> None:
             pass
         else:
             raise AssertionError("invalid browser bridge token was accepted")
+
+
+def test_local_browser_bridge_restricts_targets_urls_and_javascript() -> None:
+    assert local_bridge.validate_target_id("ABCDEF123456") == "ABCDEF123456"
+    assert (
+        local_bridge.validate_navigation_url("https://www.douyin.com/video/7654321098765432")
+        == "https://www.douyin.com/video/7654321098765432"
+    )
+    assert local_bridge.validate_navigation_url("https://www.doubao.com/chat/") == "https://www.doubao.com/chat/"
+    assert local_bridge.validate_javascript("document.title") == "document.title"
+
+    for unsafe_url in (
+        "http://www.douyin.com/video/1",
+        "https://example.com/",
+        "file:///etc/passwd",
+        "https://user:pass@www.douyin.com/",
+    ):
+        try:
+            local_bridge.validate_navigation_url(unsafe_url)
+        except local_bridge.LocalBridgeError:
+            pass
+        else:
+            raise AssertionError(f"unsafe bridge navigation URL was accepted: {unsafe_url}")
+
+    for unsafe_js in (
+        "document.cookie",
+        "window.localStorage.getItem('token')",
+        "navigator.credentials.get({password:true})",
+    ):
+        try:
+            local_bridge.validate_javascript(unsafe_js)
+        except local_bridge.LocalBridgeError:
+            pass
+        else:
+            raise AssertionError(f"unsafe bridge JavaScript was accepted: {unsafe_js}")
+
+
+def test_local_browser_bridge_normalizes_cdp_evaluation() -> None:
+    assert local_bridge.normalize_evaluation(
+        {"id": 1, "result": {"result": {"type": "number", "value": 42}}}
+    ) == {"value": 42}
+    exception = {"text": "Uncaught"}
+    assert local_bridge.normalize_evaluation(
+        {"id": 1, "result": {"exceptionDetails": exception}}
+    ) == {"exceptionDetails": exception}
 
 
 def test_environment_reports_both_browser_modes() -> None:
@@ -635,6 +681,8 @@ def test_archive_sample_comments_marks_scope() -> None:
 def main() -> None:
     test_browser_bridge_accepts_only_loopback_http_origins()
     test_browser_bridge_reads_and_validates_local_token()
+    test_local_browser_bridge_restricts_targets_urls_and_javascript()
+    test_local_browser_bridge_normalizes_cdp_evaluation()
     test_environment_reports_both_browser_modes()
     test_import_sanitized_browser_capture()
     test_browser_capture_rejects_credentials_and_signed_media_urls()
