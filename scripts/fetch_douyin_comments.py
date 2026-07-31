@@ -21,6 +21,7 @@ from urllib import parse
 import browser_bridge
 
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+DOUYIN_COMMENT_HOSTS = ("douyin.com",)
 CSV_FIELDS = [
     "row_index",
     "level",
@@ -147,20 +148,48 @@ def current_page_url(target: str) -> str:
     return value
 
 
+def validate_comment_base_url(value: str) -> str:
+    try:
+        parsed = parse.urlsplit(value)
+    except ValueError as exc:
+        raise DouyinCommentError("Invalid Douyin comment endpoint.") from exc
+    host = (parsed.hostname or "").rstrip(".").lower()
+    allowed_host = any(
+        host == suffix or host.endswith("." + suffix) for suffix in DOUYIN_COMMENT_HOSTS
+    )
+    if (
+        parsed.scheme != "https"
+        or not allowed_host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/aweme/v1/web/comment/list/"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise DouyinCommentError("Douyin comment endpoint is not allowlisted.")
+    return value
+
+
 def find_comment_base_url(target: str, retries: int = 8, delay: float = 1.0) -> str:
     js = r"""
 (() => {
   const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
   const observed = urls.find(u => u.includes('/aweme/v1/web/comment/list/')) || '';
-  if (!observed) return '';
-  const u = new URL(observed);
-  return `${u.origin}${u.pathname}`;
+  if (observed) {
+    const u = new URL(observed);
+    return `${u.origin}${u.pathname}`;
+  }
+  const host = location.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'douyin.com' || host.endsWith('.douyin.com')) {
+    return `${location.origin}/aweme/v1/web/comment/list/`;
+  }
+  return '';
 })()
 """
     for _ in range(retries):
         base = eval_js(target, js, timeout=10)
         if base:
-            return str(base)
+            return validate_comment_base_url(str(base))
         time.sleep(delay)
     raise DouyinCommentError(
         "No Douyin comment/list request was observed. Open the page through the configured local browser bridge, "

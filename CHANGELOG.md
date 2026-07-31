@@ -4,6 +4,13 @@ All notable changes to this derivative are documented here.
 
 ## Unreleased
 
+## 0.2.1 - 2026-07-31
+
+### Reliability
+
+- Fall back to the strictly allowlisted same-origin Douyin comment endpoint
+  when the page renders comments without retaining a Resource Timing entry.
+
 ## 0.2.0 - 2026-07-31
 
 ### Browser compatibility

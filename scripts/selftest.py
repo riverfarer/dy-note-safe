@@ -136,6 +136,36 @@ def test_extract_prefers_separate_dash_audio() -> None:
     assert dut.find_audio_media_url({"resources": [video_url]}) is None
 
 
+def test_comment_endpoint_is_limited_to_douyin_https() -> None:
+    expected = "https://www.douyin.com/aweme/v1/web/comment/list/"
+    assert comments.validate_comment_base_url(expected) == expected
+    for unsafe in (
+        "http://www.douyin.com/aweme/v1/web/comment/list/",
+        "https://example.com/aweme/v1/web/comment/list/",
+        "https://www.douyin.com/aweme/v2/web/comment/list/reply/",
+        "https://www.douyin.com/aweme/v1/web/comment/list/?token=secret",
+    ):
+        try:
+            comments.validate_comment_base_url(unsafe)
+        except comments.DouyinCommentError:
+            pass
+        else:
+            raise AssertionError(f"unsafe comment endpoint was accepted: {unsafe}")
+
+
+def test_comment_endpoint_falls_back_to_current_douyin_origin() -> None:
+    original_eval_js = comments.eval_js
+    comments.eval_js = lambda target, javascript, timeout=30: (
+        "https://www.douyin.com/aweme/v1/web/comment/list/"
+    )
+    try:
+        assert comments.find_comment_base_url("TARGET", retries=1, delay=0) == (
+            "https://www.douyin.com/aweme/v1/web/comment/list/"
+        )
+    finally:
+        comments.eval_js = original_eval_js
+
+
 def test_environment_reports_both_browser_modes() -> None:
     report = environment.build_report("http://127.0.0.1:1")
     browser = report["browser"]
@@ -714,6 +744,8 @@ def main() -> None:
     test_local_browser_bridge_creates_private_token()
     test_local_browser_bridge_normalizes_cdp_evaluation()
     test_extract_prefers_separate_dash_audio()
+    test_comment_endpoint_is_limited_to_douyin_https()
+    test_comment_endpoint_falls_back_to_current_douyin_origin()
     test_environment_reports_both_browser_modes()
     test_import_sanitized_browser_capture()
     test_browser_capture_rejects_credentials_and_signed_media_urls()
