@@ -3,14 +3,15 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from urllib import error, request
 
+import browser_bridge
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -28,13 +29,12 @@ def command_version(cmd: list[str]) -> str | None:
     return first[0].strip() if first else ""
 
 
-def proxy_ready() -> bool:
+def browser_bridge_status(endpoint: str | None = None) -> tuple[str, str]:
     try:
-        # This URL is a fixed local control-plane endpoint, not external input.
-        with request.urlopen("http://localhost:3456/targets", timeout=3) as resp:  # nosec B310
-            return resp.status == 200
-    except error.URLError:
-        return False
+        client = browser_bridge.BrowserBridge(endpoint)
+    except browser_bridge.BrowserBridgeError as exc:
+        return "INVALID", str(exc)
+    return ("OK" if client.ready() else "MISSING", client.endpoint)
 
 
 def whisper_cache() -> list[dict[str, object]]:
@@ -125,13 +125,15 @@ def probe_qwen_python() -> dict[str, object]:
     return {"python": scripts[0], "error": "probe failed"}
 
 
-def main() -> int:
+def build_report(browser_endpoint: str | None = None) -> dict[str, object]:
     ffmpeg = shutil.which("ffmpeg")
     whisper = shutil.which("whisper")
     whisper_import = can_import_whisper()
     qwen_probe = probe_qwen_python()
     shared_cache = shared_cache_dir()
-    report = {
+    bridge_state, resolved_endpoint = browser_bridge_status(browser_endpoint)
+    capture_import = Path(__file__).with_name("import_browser_capture.py").exists()
+    return {
         "shared_resources": {
             "cache_dir": str(shared_cache),
             "qwen3_asr_venv": str(shared_cache / "qwen3-asr-venv"),
@@ -140,7 +142,14 @@ def main() -> int:
             "faster_whisper_cache": str(Path.home() / ".cache" / "faster-whisper"),
             "qwen_python_candidates": [str(path) for path in qwen_python_candidates()],
         },
-        "web_access_proxy": "OK" if proxy_ready() else "MISSING",
+        "browser": {
+            "codex_chrome_capture": "OK" if capture_import else "MISSING import_browser_capture.py",
+            "local_bridge": bridge_state,
+            "local_bridge_endpoint": resolved_endpoint,
+            "endpoint_env": browser_bridge.ENDPOINT_ENV,
+            "legacy_default_compatible": resolved_endpoint == browser_bridge.DEFAULT_ENDPOINT,
+        },
+        "web_access_proxy": "OK" if bridge_state == "OK" else "OPTIONAL",
         "ffmpeg": command_version([ffmpeg, "-version"]) if ffmpeg else None,
         "whisper_cli": whisper,
         "whisper_python_import": "OK" if whisper_import else "MISSING",
@@ -154,13 +163,28 @@ def main() -> int:
             "douyin_comments": "OK" if (Path(__file__).with_name("fetch_douyin_comments.py")).exists() else "MISSING fetch_douyin_comments.py",
             "note_budget": "OK" if (Path(__file__).with_name("compute_note_budget.py")).exists() else "MISSING compute_note_budget.py",
             "note_score": "OK" if (Path(__file__).with_name("score_dy_note.py")).exists() else "MISSING score_dy_note.py",
-            "douyin_browser_extract": "OK" if proxy_ready() else "NEEDS web-access proxy",
-            "douyin_web_ai_brief": "OK" if proxy_ready() and (Path(__file__).with_name("douyin_web_ai_brief.py")).exists() else "NEEDS web-access proxy and douyin_web_ai_brief.py",
-            "doubao_web_brief_fallback": "OK" if proxy_ready() else "NEEDS web-access proxy; login is checked by doubao_video_brief.py --check-login",
+            "browser_capture_import": "OK" if capture_import else "MISSING import_browser_capture.py",
+            "douyin_browser_extract": "OK via local bridge" if bridge_state == "OK" else "NEEDS local bridge for direct URL extraction; Codex may import a safe browser capture",
+            "douyin_web_ai_brief": "OK via local bridge" if bridge_state == "OK" and (Path(__file__).with_name("douyin_web_ai_brief.py")).exists() else "USE Codex Chrome capture or start a local bridge",
+            "doubao_web_brief_fallback": "OK via local bridge" if bridge_state == "OK" else "USE Codex Chrome interaction or start a local bridge; login must be verified in that browser",
             "audio_asr": "OK" if ffmpeg and (whisper or whisper_import) else "NEEDS ffmpeg and whisper",
             "qwen3_asr": "OK" if qwen_probe.get("qwen_asr") == "OK" else "NEEDS shared qwen-asr environment; run scripts/setup_qwen_asr_env.py",
         },
     }
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Check DyNote's optional dependencies and browser routes.")
+    parser.add_argument(
+        "--browser-endpoint",
+        help="Loopback browser bridge origin. Defaults to DY_NOTE_BROWSER_ENDPOINT or http://127.0.0.1:3456.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    report = build_report(args.browser_endpoint)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import archive_dy_note_assets as assets
 import browser_bridge as bridge
+import check_environment as environment
 import compute_note_budget as budgeter
 import create_analysis_plan as planner
 import douyin_web_ai_brief as dwai
@@ -37,6 +38,17 @@ def test_browser_bridge_accepts_only_loopback_http_origins() -> None:
             pass
         else:
             raise AssertionError(f"unsafe browser endpoint was accepted: {unsafe}")
+
+
+def test_environment_reports_both_browser_modes() -> None:
+    report = environment.build_report("http://127.0.0.1:1")
+    browser = report["browser"]
+    routes = report["routes"]
+
+    assert browser["codex_chrome_capture"] == "OK"
+    assert browser["local_bridge"] == "MISSING"
+    assert routes["browser_capture_import"] == "OK"
+    assert "Codex" in routes["douyin_browser_extract"]
 
 
 def test_import_sanitized_browser_capture() -> None:
@@ -601,6 +613,7 @@ def test_archive_sample_comments_marks_scope() -> None:
 
 def main() -> None:
     test_browser_bridge_accepts_only_loopback_http_origins()
+    test_environment_reports_both_browser_modes()
     test_import_sanitized_browser_capture()
     test_browser_capture_rejects_credentials_and_signed_media_urls()
     test_parse_srt()
